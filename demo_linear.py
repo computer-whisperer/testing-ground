@@ -4,6 +4,34 @@ import ilqg
 A demo of iLQG/DDP with a control-limited LTI system.
 """
 
+
+
+def lin_dyn_cst(x, u, A, B, Q, R, want_all=False):
+    # For a PD quadratic u-cost
+    # no cost (nans) is equivalent to u=0
+
+    u[isnan(u)] = 0
+    if not want_all:
+        v1 = dot(A, x)
+        v2 = dot(B, u)
+        f = v1 + v2
+        v11 = dot(Q, x)
+        v1 = sum(Q * v11)
+        v2 = sum(R * dot(R,u))
+        c = 0.5*v1 + 0.5*v2
+        return f, c
+    else:
+        N = x.shape(2)
+        fx = tile(A, [1, 1, N])
+        fu = tile(B, [1, 1, N])
+        cx = dot(Q, x)
+        cu = dot(R, u)
+        cxx = tile(Q, [1, 1, N])
+        cxu = tile(zeros(B.shape), [1, 1, N])
+        cuu = tile(R, [1, 1, N])
+        return None, None, fx, fu, None, None, None, cx, cu, cxx, cxu, cuu
+
+
 print('A demonstration of the iLQG/DDP algorithm\n'
       'with a random control-limited time-invariant linear system.\n'
       'for details see\nTassa, Mansard & Todorov, ICRA 2014\n'
@@ -34,23 +62,4 @@ u0 = .1*random.randn(m, T)  # initial controls
 # run the optimization
 ilqg.ilqg(dyncst, x0, u0, {})
 
-def lin_dyn_cst(x, u, A, B, Q, R, want_all=False):
-    # For a PD quadratic u-cost
-    # no cost (nans) is equivalent to u=0
-    u[isnan(u)] = 0
-
-    if not want_all:
-        f = dot(A, x) + dot(B, u)
-        c = 0.5*sum(x*(dot(Q,x)),1) + 0.5*sum(u * dot(R, u), 1)
-        return f, c
-    else:
-        N = x.shape(2)
-        fx = tile(A, [1, 1, N])
-        fu = tile(B, [1, 1, N])
-        cx = dot(Q, x)
-        cu = dot(R, u)
-        cxx = tile(Q, [1, 1, N])
-        cxu = tile(zeros(B.shape), [1, 1, N])
-        cuu = tile(R, [1, 1, N])
-        return None, None, fx, fu, None, None, None, cx, cu, cxx, cxu, cuu
 

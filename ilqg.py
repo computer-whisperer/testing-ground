@@ -66,7 +66,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
     # user-adjustable parameters
     options = {
-        'lims':           [],  # control limits
+        'lims':           array([]),  # control limits
         'parallel':       True,  # use parallel line-search?
         'Alpha':          10**linspace(0, -3, 8),  # backtracking coefficients
         'tolFun':         1e-7,  # reduction exit criterion
@@ -81,7 +81,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
         'zMin':           0,  # minimal accepted reduction ratio
         'plot':           1,  # 0: no;  k>0: every k iters; k<0: every k iters, with derivs window
         'print':          2,  # 0: no;  1: final; 2: iter; 3: iter, detailed
-        'cost':           [],  # initial cost for pre-rolled trajectory
+        'cost':           array([]),  # initial cost for pre-rolled trajectory
     }
 
     # --- initial sizes and controls
@@ -116,7 +116,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
         for alpha in options["Alpha"]:
             x, un, cost = forward_pass(x0[:, 0], alpha*u, array([]), array([]), array([]), 1, dyncst, options["lims"])
             # simplistic divergence test
-            if all(abs(x[:]) < 1e8):
+            n = abs(x)
+            if all(n < 1e8):
                 u = un
                 diverge = False
                 break
@@ -129,14 +130,14 @@ def ilqg(dyncst, x0, u0, options_in={}):
             cost = options["cost"]
 
     if diverge:
-        Vx, Vxx, stop = nan
+        Vx, Vxx, stop = nan, nan, nan
         L = zeros((m, n, N))
         cost = array([])
         timing = array([0, 0, 0, 0])
         trace = array([1, lamb, nan, nan, nan, sum(cost.flatten(1)), dlamb])
         if verbosity > 0:
             print("\nEXIT: Initial control sequence caused divergence\n")
-        return x, u, L, Vx, Vxx, cost, trace, stop, timing
+        return x, u, L, Vx, Vxx, cost, trace, timing
 
     flgChange = 1
     #t_total = tic
@@ -299,29 +300,32 @@ def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
     N = u.shape[1]
 
     xnew = zeros((n, K, N))
-    xnew[:,:,0] = x0
+    xnew[:,:,0] = tile(x0, (K, 1)).T
     unew = zeros((m, K, N))
     cnew = zeros((1, K, N+1))
-    for i in range(N):
-        unew[:,:,i] = u[:,i*K1]
+    for i in range(N-1):
+        v = tile(u[:,i], (K, 1)).T
+        unew[:,:,i] = v
 
-        if du is not None:
+        if du.size != 0:
             unew[:,:,i] = unew[:,:,i] + du[:,i]*alpha
 
-        if L is not None:
-            dx = xnew[:,:,i] - x[:,i*K1]
+        if L.size != 0:
+            dx = xnew[:,:,i] - tile(x, (i*K, 1)).T
             unew[:,:,i] = unew[:,:,i] + L[:,:,i]*dx
 
-        if lims is not None:
+        if lims.size != 0:
             unew[:,:,i] = min(lims[:,2*K1], max(lims[:,1*K1], unew[:,:,i]))
 
         xnew[:,:,i+1], cnew[:,:,i] = dyncst(xnew[:,:,i], unew[:,:,i], i*K1)
-    _, cnew[:,:,i] = dyncst(xnew[:,:,N+1], array([m, K, 1]).fill(nan))
+    val = empty([m, K])
+    val.fill(nan)
+    _, cnew[:,:,i] = dyncst(xnew[:,:,N-1], val, i)
 
     # put the time dimension in the columns
-    xnew = xnew.transpose[1, 3, 2]
-    unew = unew.transpose[1, 3, 2]
-    cnew = cnew.transpose[1, 3, 2]
+    xnew = xnew.transpose([0, 2, 1])
+    unew = unew.transpose([0, 2, 1])
+    cnew = cnew.transpose([0, 2, 1])
 
     return xnew, unew, cnew
 

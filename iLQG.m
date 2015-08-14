@@ -378,9 +378,7 @@ m        = size(u,1);
 N        = size(u,2);
 
 xnew        = zeros(n,K,N);
-o = ones(1,K);
-v = x0(:,o);
-xnew(:,:,1) = v;
+xnew(:,:,1) = x0(:,ones(1,K));
 unew        = zeros(m,K,N);
 cnew        = zeros(1,K,N+1);
 for i = 1:N

@@ -9,13 +9,13 @@ full_DDP = true;
 % optimization problem
 DYNCST  = @(x,u,i) car_dyn_cst(x,u,full_DDP);
 T       = 500;              % horizon
-x0      = [0;0;pi*2/2;0];   % initial state
+x0      = [1;1;pi*3/2;0];   % initial state
 u0      = .1*randn(2,T);    % initial controls
 Op.lims  = [-.5 .5;         % wheel angle limits (radians)
              -2  2];        % acceleration limits (m/s^2)
 
 % run the optimization
-%Op.maxIter = 80;
+Op.maxIter = 5;
 [x,u]= iLQG(DYNCST, x0, u0, Op);
 
 
