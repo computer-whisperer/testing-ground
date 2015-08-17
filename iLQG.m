@@ -133,8 +133,10 @@ if size(x0,2) == 1
     diverge = true;
     for alpha = Op.Alpha
         [x,un,cost]  = forward_pass(x0(:,1),alpha*u,[],[],[],1,DYNCST,Op.lims);
+        n1 = abs(x);
+        disp(n1)
         % simplistic divergence test
-        if all(abs(x(:)) < 1e8)
+        if all(n1 < 1e8)
             u = un;
             diverge = false;
             break
@@ -434,7 +436,6 @@ Vxx(:,:,N)  = cxx(:,:,N);
 
 diverge  = 0;
 for i = N-1:-1:1
-
     Qu  = cu(:,i)      + fu(:,:,i)'*Vx(:,i+1);
     Qx  = cx(:,i)      + fx(:,:,i)'*Vx(:,i+1);
     Qux = cxu(:,:,i)'  + fu(:,:,i)'*Vxx(:,:,i+1)*fx(:,:,i);
@@ -476,7 +477,8 @@ for i = N-1:-1:1
         end
 
         % find control law
-        kK = -R\(R'\[Qu Qux_reg]);
+        val = [Qu Qux_reg]
+        kK = -R\(R'\val);
         k_i = kK(:,1);
         K_i = kK(:,2:n+1);
 

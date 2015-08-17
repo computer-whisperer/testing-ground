@@ -15,7 +15,8 @@ Q = h*eye(n);
 R = .1*h*eye(m);
 
 % control limits
-Op.lims = ones(m,1)*[-1 1]*.6;
+% Op.lims = ones(m,1)*[-1 1]*.6;
+Op.lims = [];
 
 % optimization problem
 DYNCST  = @(x,u,i) lin_dyn_cst(x,u,A,B,Q,R);

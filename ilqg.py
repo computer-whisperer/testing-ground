@@ -116,8 +116,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
         for alpha in options["Alpha"]:
             x, un, cost = forward_pass(x0[:, 0], alpha*u, array([]), array([]), array([]), 1, dyncst, options["lims"])
             # simplistic divergence test
-            n = abs(x)
-            if all(n < 1e8):
+            n1 = abs(x)
+            if all(n1 < 1e8):
                 u = un
                 diverge = False
                 break
@@ -134,7 +134,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
         L = zeros((m, n, N))
         cost = array([])
         timing = array([0, 0, 0, 0])
-        trace = array([1, lamb, nan, nan, nan, sum(cost.flatten(1)), dlamb])
+        trace = array([1, lamb, nan, nan, nan, nan, sum(cost.flatten(1)), dlamb])
         if verbosity > 0:
             print("\nEXIT: Initial control sequence caused divergence\n")
         return x, u, L, Vx, Vxx, cost, trace, timing
@@ -149,7 +149,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
     z = 0
     expected = 0
     trace = zeros((min(options["maxIter"], 1e6), 8))
-    trace[0,:] = [1, lamb, nan, nan, nan, sum(cost.flatten(1)), dlamb]
+    trace[0,:] = array([1, lamb, nan, nan, nan, nan, sum(cost.flatten(1)), dlamb])
     L = zeros((m, n, N))
     if verbosity > 0:
         print("\n============== begin iLQG ===============\n")
@@ -161,7 +161,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
         # ==== STEP 1: differentiate dynamics along new trajectory
         if flgChange:
             #t_diff = tic
-            _, _, fx, fu, fxx, fxu, fuu, cx, cu, cxx, cxu, cuu = dyncst(x, array([u, array([m, 1]).fill(nan)]), arange(1., N+2), True)
+            _, _, fx, fu, fxx, fxu, fuu, cx, cu, cxx, cxu, cuu = dyncst(x[:,:,0], append(u[:,:,0], full([m, 1], nan), axis=1), arange(1., N+2), True)
             #diff_t = diff_t + toc(t_diff)
             flgChange = 0
 
@@ -299,13 +299,12 @@ def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
     m = u.shape[0]
     N = u.shape[1]
 
-    xnew = zeros((n, K, N))
+    xnew = zeros((n, K, N+1))
     xnew[:,:,0] = tile(x0, (K, 1)).T
     unew = zeros((m, K, N))
     cnew = zeros((1, K, N+1))
-    for i in range(N-1):
-        v = tile(u[:,i], (K, 1)).T
-        unew[:,:,i] = v
+    for i in range(N):
+        unew[:,:,i] = tile(u[:,i], (K, 1)).T
 
         if du.size != 0:
             unew[:,:,i] = unew[:,:,i] + du[:,i]*alpha
@@ -318,9 +317,8 @@ def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
             unew[:,:,i] = min(lims[:,2*K1], max(lims[:,1*K1], unew[:,:,i]))
 
         xnew[:,:,i+1], cnew[:,:,i] = dyncst(xnew[:,:,i], unew[:,:,i], i*K1)
-    val = empty([m, K])
-    val.fill(nan)
-    _, cnew[:,:,i] = dyncst(xnew[:,:,N-1], val, i)
+
+    _, cnew[:,:,i] = dyncst(xnew[:,:,N-1], full([m, K], nan), i)
 
     # put the time dimension in the columns
     xnew = xnew.transpose([0, 2, 1])
@@ -338,8 +336,8 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
     vectens = lambda a, b: transpose(sum(a*b, 1), [3, 2, 1])
 
     N = cx.shape[1]
-    n = len(cx)/N
-    m = len(cu)/N
+    n = cx.shape[0]
+    m = cu.shape[0]
 
     cx    = reshape(cx,  [n, N])
     cu    = reshape(cu,  [m, N])
@@ -353,38 +351,38 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
     Vxx   = zeros((n,n,N))
     dV    = [0, 0]
 
-    Vx[:,N]     = cx[:,N]
-    Vxx[:,:,N]  = cxx[:,:,N]
+    Vx[:,N-1]     = cx[:,N-1]
+    Vxx[:,:,N-1]  = cxx[:,:,N-1]
 
     diverge = 0
 
-    for i in reversed(range(N)):
+    for i in reversed(range(N-1)):
+        Qu = cu[:,i] + dot(fu[:,:,i].conj().transpose(), Vx[:,i+1])
+        Qx = cx[:,i] + dot(fx[:,:,i].conj().transpose(), Vx[:,i+1])
 
-        Qu = cu[:,i] + fu[:,:,i].conj().transpose()*Vx[:,i+1]
-        Qx = cx[:,i] + fx[:,:,i].conj().transpose()*Vx[:,i+1]
-
-        Qux = cxu[:,:,i] + fu[:,:,i].conj().transpose()*Vxx[:,:,i+1]*fx[:,:,i]
+        val = dot(fu[:,:,i].conj().transpose(), Vxx[:,:,i+1])
+        Qux = cxu[:,:,i].conj().T + dot(val, fx[:,:,i])
         if fxu is not None:
             fxuVx = vectens(Vx[:,i+1], fxu[:,:,:,i])
             Qux = Qux + fxuVx
 
-        Quu = cuu[:,:,i] + fu[:,:,i].conj().transpose()*Vxx[:,:,i+1]*fu[:,:,i]
+        Quu = cuu[:,:,i] + dot(dot(fu[:,:,i].conj().transpose(), Vxx[:,:,i+1]), fu[:,:,i])
         if fuu is not None:
             fuuVx = vectens(Vx[:,i+1], fuu[:,:,:,i])
             Quu = Quu + fuuVx
 
-        Qxx = cxx[:,:,i] + fx[:,:,i].conj().transpose()*Vxx[:,:,i+1]*fx[:,:,i]
+        Qxx = cxx[:,:,i] + dot(dot(fx[:,:,i].conj().transpose(), Vxx[:,:,i+1]), fx[:,:,i])
         if fxx is not None:
             fxxVx = vectens(Vx[:,i+1], fxx[:,:,:,i])
             Qxx = Qxx + fxxVx
 
         Vxx_reg = (Vxx[:,:,i+1] + lamb*eye(n)*(regType==2))
 
-        Qux_reg = cxu[:,:,i].conj().transpose() + fu[:,:,i].conj().transpose()*Vxx_reg*fx[:,:,i]
+        Qux_reg = cxu[:,:,i].conj().transpose() + dot(dot(fu[:,:,i].conj().transpose(), Vxx_reg), fx[:,:,i])
         if fxu is not None:
             Qux_reg = Qux_reg + fxuVx
 
-        QuuF = cuu[:,:,i] + fu[:,:,i].conj().T*Vxx_reg*fu[:,:,i] + lamb*eye(m)*(regType == 1)
+        QuuF = cuu[:,:,i] + dot(dot(fu[:,:,i].conj().T, Vxx_reg), fu[:,:,i]) + lamb*eye(m)*(regType == 1)
 
         if fuu is not None:
             QuuF = QuuF + fuuVx
@@ -399,7 +397,9 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
                 return diverge, Vx, Vxx, k, K, dV
 
             # find control law
-            kK = linalg.solve(-R, linalg.solve(R.conj().transpose(), [Qu, Qux_reg]))
+            val1 = concatenate((Qu, Qux_reg), 1)
+            val2 = linalg.solve(R.conj().transpose(), val1)
+            kK = linalg.solve(-R, val2)
             k_i = kK[:,1]
             K_i = kK[:,2:n+1]
 
@@ -418,9 +418,9 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
                 K_i[free,:] = Lfree
 
         # update cost-to-go approximation
-        dV = dV + [k_i.conj().T*Qu, .5*k_i.conj().T*Quu*k_i]
-        Vx[:,i] = Qx + K_i.conj().T*Quu*k_i + K_i.conj().T*Qu + Qux.conj().T*k_i
-        Vxx[:,:,i]  = Qxx + K_i.conj().T*Quu*K_i + K_i.conj().T*Qux + Qux.conj().T*K_i
+        dV = dV + [dot(k_i.conj().T, Qu), .5*dot(k_i.conj().T, Quu*k_i)]
+        Vx[:,i] = Qx + dot(dot(K_i.conj().T, Quu), k_i) + dot(K_i.conj().T, Qu) + dot(Qux.conj().T, k_i)
+        Vxx[:,:,i]  = Qxx + dot(dot(K_i.conj().T, Quu), K_i) + dot(K_i.conj().T, Qux) + dot(Qux.conj().T, K_i)
         Vxx[:,:,i]  = .5*(Vxx[:,:,i] + Vxx[:,:,i].conj().T)
 
         # save controls/gains
