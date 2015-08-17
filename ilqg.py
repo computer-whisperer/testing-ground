@@ -183,7 +183,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
             backPassDone = 1
 
             #Check for termination due to small gradient
-            g_norm = mean(max(abs(l) / (abs(u)+1),[],1))
+
+            g_norm = mean((abs(u[:,:,0])+1) / abs(l).max(0))
             trace[alg_iter][0] = alg_iter
             trace[alg_iter][4] = g_norm
             trace[alg_iter][7] = nan
@@ -201,7 +202,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
         if backPassDone:
             #t_fwd = tic
             if options["parallel"]: # parallel line-search
-                xnew, unew, costnew = forward_pass(x0, u, L, x[:,0:N], l, options["alpha"], dyncst, options["lims"])
+                xnew, unew, costnew = forward_pass(x0, u, L, x[:,0:N], l, options["Alpha"], dyncst, options["lims"])
                 dcost = sum(cost.flatten(1)) - sum(costnew, 2)
                 dcost, w = max(dcost)
                 alpha = options["alpha"](w)
@@ -300,7 +301,8 @@ def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
     N = u.shape[1]
 
     xnew = zeros((n, K, N+1))
-    xnew[:,:,0] = tile(x0, (K, 1)).T
+    val1 = tile(x0, (K, 1))
+    xnew[:,:,0] = val1.T
     unew = zeros((m, K, N))
     cnew = zeros((1, K, N+1))
     for i in range(N):
@@ -397,15 +399,15 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
                 return diverge, Vx, Vxx, k, K, dV
 
             # find control law
-            val1 = concatenate((Qu, Qux_reg), 1)
-            val2 = linalg.solve(R.conj().transpose(), val1)
-            kK = linalg.solve(-R, val2)
-            k_i = kK[:,1]
-            K_i = kK[:,2:n+1]
+            val1 = empty([Qu.shape[0], 1])
+            val1[:, 0] = Qu
+            kK = linalg.solve(-R, linalg.solve(R.conj().transpose(), concatenate((val1, Qux_reg), 1)))
+            k_i = kK[:,0]
+            K_i = kK[:,1:n+1]
 
         else:   # Solve Quadratic Program
-            lower = lims[:,1]-u[:,i]
-            upper = lims[:,2]-u[:,i]
+            lower = lims[:,0]-u[:,i]
+            upper = lims[:,1]-u[:,i]
 
             k_i, result, R, free = boxQP(Quuf, Qu, lower, upper, k[:,min((i+1, N-1))])
             if result < 1:

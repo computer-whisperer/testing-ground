@@ -134,7 +134,6 @@ if size(x0,2) == 1
     for alpha = Op.Alpha
         [x,un,cost]  = forward_pass(x0(:,1),alpha*u,[],[],[],1,DYNCST,Op.lims);
         n1 = abs(x);
-        disp(n1)
         % simplistic divergence test
         if all(n1 < 1e8)
             u = un;
@@ -380,7 +379,8 @@ m        = size(u,1);
 N        = size(u,2);
 
 xnew        = zeros(n,K,N);
-xnew(:,:,1) = x0(:,ones(1,K));
+val = x0(:,ones(1,K))
+xnew(:,:,1) = val;
 unew        = zeros(m,K,N);
 cnew        = zeros(1,K,N+1);
 for i = 1:N
