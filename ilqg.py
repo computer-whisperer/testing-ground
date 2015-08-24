@@ -1,6 +1,13 @@
 from numpy import *
 import timeit
 
+def app_tile(A, reps):
+    A_ = A[:]
+    if A.ndim < len(reps):
+        while len(A_.shape) < len(reps):
+            A_ = expand_dims(A_, axis=len(A_.shape))
+    return tile(A_, reps)
+
 def ilqg(dyncst, x0, u0, options_in={}):
     """
     PORTED FROM MATLAB CODE
@@ -114,7 +121,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
     if x0.shape[1] == 1:
         diverge = True
         for alpha in options["Alpha"]:
-            x, un, cost = forward_pass(x0[:, 0], alpha*u, array([]), array([]), array([]), 1, dyncst, options["lims"])
+            x, un, cost = forward_pass(x0[:,0], alpha*u, array([]), array([]), array([]), 1, dyncst, options["lims"])
             # simplistic divergence test
             n1 = abs(x)
             if all(n1 < 1e8):
@@ -175,8 +182,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
             if diverge:
                 if verbosity > 2:
                     print("Cholesky failed at timestep {}.".format(diverge))
-                dlamb = max(dlamb * options["lambdaFactor"], options["lambdaFactor"])
-                lamb = max(lamb * dlamb, options["lambdaMin"])
+                dlamb = maximum(dlamb * options["lambdaFactor"], options["lambdaFactor"])
+                lamb = maximum(lamb * dlamb, options["lambdaMin"])
                 if lamb > options["lambdaMax"]:
                     break
                 continue
@@ -203,10 +210,11 @@ def ilqg(dyncst, x0, u0, options_in={}):
             #t_fwd = tic
             if options["parallel"]: # parallel line-search
                 xnew, unew, costnew = forward_pass(x0, u, L, x[:,0:N], l, options["Alpha"], dyncst, options["lims"])
-                dcost = sum(cost.flatten(1)) - sum(costnew, 2)
-                dcost, w = max(dcost)
-                alpha = options["alpha"](w)
-                expected = -alpha*(dV(1) + alpha*dV(2))
+                dcost = sum(cost.flatten(1)) - sum(costnew, 1)
+                w = amax(dcost, axis=1)[0]
+                dcost = dcost[0, w]
+                alpha = options["Alpha"][w]
+                expected = -alpha*(dV[0] + alpha*dV[1])
                 if expected > 0:
                     z = dcost/expected
                 else:
@@ -261,8 +269,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
         else: # No cost improvement
 
             # increase lambda
-            dlamb = max(dlamb * options["lambdaFactor"], options["lambdaFactor"])
-            lamb = max(lamb * dlamb, options["lambdaMin"])
+            dlamb = maximum(dlamb * options["lambdaFactor"], options["lambdaFactor"])
+            lamb = maximum(lamb * dlamb, options["lambdaMin"])
 
             # print status
             if verbosity > 1:
@@ -296,29 +304,28 @@ def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
         K = 1
     else:
         K = max(s)
-    K1 = ones((1, K)) # useful for expansion
     m = u.shape[0]
     N = u.shape[1]
 
     xnew = zeros((n, K, N+1))
-    val1 = tile(x0, (K, 1))
-    xnew[:,:,0] = val1.T
+    xnew[:,:,0] = app_tile(x0, (1, K))
     unew = zeros((m, K, N))
     cnew = zeros((1, K, N+1))
     for i in range(N):
-        unew[:,:,i] = tile(u[:,i], (K, 1)).T
+        unew[:,:,i] = app_tile(u[:,i], (1, K))
 
         if du.size != 0:
-            unew[:,:,i] = unew[:,:,i] + du[:,i]*alpha
+            val = du[:,i][:,None] * alpha[None, :]
+            unew[:,:,i] = unew[:,:,i] + val
 
         if L.size != 0:
-            dx = xnew[:,:,i] - tile(x, (i*K, 1)).T
-            unew[:,:,i] = unew[:,:,i] + L[:,:,i]*dx
+            dx = xnew[:,:,1] - app_tile(x[:,i], (1, K))
+            unew[:,:,i] = unew[:,:,i] + dot(L[:,:,i], dx)
 
         if lims.size != 0:
-            unew[:,:,i] = min(lims[:,2*K1], max(lims[:,1*K1], unew[:,:,i]))
+            unew[:,:,i] = min(app_tile(lims[:,1], (1, K)), maximum(app_tile(lims[:,0], (1, K)), unew[:,:,i]))
 
-        xnew[:,:,i+1], cnew[:,:,i] = dyncst(xnew[:,:,i], unew[:,:,i], i*K1)
+        xnew[:,:,i+1], cnew[:,:,i] = dyncst(xnew[:,:,i], unew[:,:,i], i*ones((1, K)))
 
     _, cnew[:,:,i] = dyncst(xnew[:,:,N-1], full([m, K], nan), i)
 
@@ -351,7 +358,7 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
     K     = zeros((m,n,N-1))
     Vx    = zeros((n,N))
     Vxx   = zeros((n,n,N))
-    dV    = [0, 0]
+    dV    = array([0, 0])
 
     Vx[:,N-1]     = cx[:,N-1]
     Vxx[:,:,N-1]  = cxx[:,:,N-1]
@@ -420,7 +427,10 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
                 K_i[free,:] = Lfree
 
         # update cost-to-go approximation
-        dV = dV + [dot(k_i.conj().T, Qu), .5*dot(k_i.conj().T, Quu*k_i)]
+        v1 = dot(k_i.conj().T, Qu)
+        v2 = dot(dot(.5*k_i.conj().T, Quu), k_i)
+        val = [v1, v2]
+        dV = dV + val
         Vx[:,i] = Qx + dot(dot(K_i.conj().T, Quu), k_i) + dot(K_i.conj().T, Qu) + dot(Qux.conj().T, k_i)
         Vxx[:,:,i]  = Qxx + dot(dot(K_i.conj().T, Quu), K_i) + dot(K_i.conj().T, Qux) + dot(Qux.conj().T, K_i)
         Vxx[:,:,i]  = .5*(Vxx[:,:,i] + Vxx[:,:,i].conj().T)
@@ -429,4 +439,4 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
         k[:,i] = k_i
         K[:,:,i] = K_i
 
-        return diverge, Vx, Vxx, k, K, dV
+    return diverge, Vx, Vxx, k, K, dV

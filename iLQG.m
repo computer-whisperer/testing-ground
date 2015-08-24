@@ -11,16 +11,16 @@ function [x, u, L, Vx, Vxx, cost, trace, stop, timing] = iLQG(DYNCST, x0, u0, Op
 % three different formats.
 %
 %  1) step:
-%   [xnew,c] = DYNCST(x,u,i) is called during the forward pass.
-%   Here the state x and control u are vectors: size(x)==[n 1],
+%   [xnew,c] = DYNCST(x,u,i) is called during the forward pass. 
+%   Here the state x and control u are vectors: size(x)==[n 1],  
 %   size(u)==[m 1]. The cost c and time index i are scalars.
-%   If Op.parallel==true (the default) then DYNCST(x,u,i) is be
+%   If Op.parallel==true (the default) then DYNCST(x,u,i) is be 
 %   assumed to accept vectorized inputs: size(x,2)==size(u,2)==K
-%
+%  
 %  2) final:
 %   [~,cnew] = DYNCST(x,nan) is called at the end the forward pass to compute
 %   the final cost. The nans indicate that no controls are applied.
-%
+%  
 %  3) derivatives:
 %   [~,~,fx,fu,fxx,fxu,fuu,cx,cu,cxx,cxu,cuu] = DYNCST(x,u,I) computes the
 %   derivatives along a trajectory. In this case size(x)==[n N+1] where N
@@ -30,13 +30,13 @@ function [x, u, L, Vx, Vxx, cost, trace, stop, timing] = iLQG(DYNCST, x0, u0, Op
 %   note that the last temporal element N+1 is ignored for all tensors
 %   except cx and cxx, the final-cost derivatives.
 %
-% x0 - The initial state from which to solve the control problem.
+% x0 - The initial state from which to solve the control problem. 
 % Should be a column vector. If a pre-rolled trajectory is available
 % then size(x0)==[n N+1] can be provided and Op.cost set accordingly.
 %
 % u0 - The initial control sequence. A matrix of size(u0)==[m N]
 % where m is the dimension of the control and N is the number of state
-% transitions.
+% transitions. 
 %
 %
 % Op - optional parameters, see below
@@ -85,7 +85,7 @@ defaults = {'lims',           [],...            control limits
             'Alpha',          10.^linspace(0,-3,8),... backtracking coefficients
             'tolFun',         1e-7,...          reduction exit criterion
             'tolGrad',        1e-5,...          gradient exit criterion
-            'maxIter',        500,...           maximum iterations
+            'maxIter',        500,...           maximum iterations            
             'lambdaInit',     1,...             initial value for lambda
             'dlambdaInit',    1,...             initial value for dlambda
             'lambdaFactor',   1.6,...           lambda scaling factor
@@ -96,7 +96,7 @@ defaults = {'lims',           [],...            control limits
             'plot',           0,...             0: no;  k>0: every k iters; k<0: every k iters, with derivs window
             'print',          2,...             0: no;  1: final; 2: iter; 3: iter, detailed
             'plotFn',         @(x)0,...         user-defined graphics callback
-            'cost',           [],...            initial cost for pre-rolled trajectory
+            'cost',           [],...            initial cost for pre-rolled trajectory            
             };
 
 % --- initial sizes and controls
@@ -133,9 +133,8 @@ if size(x0,2) == 1
     diverge = true;
     for alpha = Op.Alpha
         [x,un,cost]  = forward_pass(x0(:,1),alpha*u,[],[],[],1,DYNCST,Op.lims);
-        n1 = abs(x);
         % simplistic divergence test
-        if all(n1 < 1e8)
+        if all(abs(x(:)) < 1e8)
             u = un;
             diverge = false;
             break
@@ -188,7 +187,7 @@ for iter = 1:Op.maxIter
     if stop
         break;
     end
-
+    
     %====== STEP 1: differentiate dynamics and cost along new trajectory
     if flgChange
         t_diff = tic;
@@ -196,15 +195,15 @@ for iter = 1:Op.maxIter
         diff_t = diff_t + toc(t_diff);
         flgChange   = 0;
     end
-
+    
     %====== STEP 2: backward pass, compute optimal control law and cost-to-go
     backPassDone   = 0;
     while ~backPassDone
-
+        
         t_back   = tic;
         [diverge, Vx, Vxx, l, L, dV] = back_pass(cx,cu,cxx,cxu,cuu,fx,fu,fxx,fxu,fuu,lambda,Op.regType,Op.lims,u);
         back_t   = back_t + toc(t_back);
-
+        
         if diverge
             if verbosity > 2
                 fprintf('Cholesky failed at timestep %d.\n',diverge);
@@ -230,7 +229,7 @@ for iter = 1:Op.maxIter
         end
         break;
     end
-
+    
     %====== STEP 3: line-search to find new control sequence, trajectory, cost
     fwdPassDone  = 0;
     if backPassDone
@@ -272,30 +271,30 @@ for iter = 1:Op.maxIter
         end
         fwd_t = fwd_t + toc(t_fwd);
     end
-
+    
     %====== STEP 4: accept (or not), draw graphics
     if fwdPassDone
-
+        
         % print status
         if verbosity > 1
             fprintf('iter: %-3d  cost: %-9.6g  reduction: %-9.3g  gradient: %-9.3g  log10lam: %3.1f\n', ...
                 iter, sum(cost(:)), dcost, g_norm, log10(lambda));
         end
-
+        
         % decrease lambda
         dlambda   = min(dlambda / Op.lambdaFactor, 1/Op.lambdaFactor);
         lambda    = lambda * dlambda * (lambda > Op.lambdaMin);
-
+        
         % accept changes
         u              = unew;
         x              = xnew;
         cost           = costnew;
         flgChange      = 1;
         Op.plotFn(x);
-
+        
         % update trace
         trace(iter,:)  = [iter lambda alpha g_norm dcost z sum(cost(:)) dlambda];
-
+        
         % terminate ?
         if dcost < Op.tolFun
             if verbosity > 0
@@ -303,21 +302,21 @@ for iter = 1:Op.maxIter
             end
             break;
         end
-
+        
     else % no cost improvement
         % increase lambda
         dlambda  = max(dlambda * Op.lambdaFactor, Op.lambdaFactor);
         lambda   = max(lambda * dlambda, Op.lambdaMin);
-
+        
         % print status
         if verbosity > 1
             fprintf('iter: %-3d  REJECTED    expected: %-11.3g    actual: %-11.3g    log10lam: %3.1f\n',...
                 iter,expected ,dcost, log10(lambda));
         end
-
+        
         % update trace
         trace(iter,:)  = [iter lambda nan g_norm dcost z sum(cost(:)) dlambda];
-
+        
         % terminate ?
         if lambda > Op.lambdaMax,
             if verbosity > 0
@@ -369,7 +368,7 @@ end
 
 function [xnew,unew,cnew] = forward_pass(x0,u,L,x,du,Alpha,DYNCST,lims)
 % parallel forward-pass (rollout)
-% internally time is on the 3rd dimension,
+% internally time is on the 3rd dimension, 
 % to facillitate vectorized dynamics calls
 
 n        = size(x0,1);
@@ -379,22 +378,21 @@ m        = size(u,1);
 N        = size(u,2);
 
 xnew        = zeros(n,K,N);
-val = x0(:,ones(1,K))
-xnew(:,:,1) = val;
+xnew(:,:,1) = x0(:,ones(1,K));
 unew        = zeros(m,K,N);
 cnew        = zeros(1,K,N+1);
 for i = 1:N
     unew(:,:,i) = u(:,i*K1);
-
+    
     if ~isempty(du)
         unew(:,:,i) = unew(:,:,i) + du(:,i)*Alpha;
-    end
-
+    end    
+    
     if ~isempty(L)
         dx          = xnew(:,:,i) - x(:,i*K1);
         unew(:,:,i) = unew(:,:,i) + L(:,:,i)*dx;
     end
-
+    
     if ~isempty(lims)
         unew(:,:,i) = min(lims(:,2*K1), max(lims(:,1*K1), unew(:,:,i)));
     end
@@ -436,6 +434,7 @@ Vxx(:,:,N)  = cxx(:,:,N);
 
 diverge  = 0;
 for i = N-1:-1:1
+    
     Qu  = cu(:,i)      + fu(:,:,i)'*Vx(:,i+1);
     Qx  = cx(:,i)      + fx(:,:,i)'*Vx(:,i+1);
     Qux = cxu(:,:,i)'  + fu(:,:,i)'*Vxx(:,:,i+1)*fx(:,:,i);
@@ -443,31 +442,31 @@ for i = N-1:-1:1
         fxuVx = vectens(Vx(:,i+1),fxu(:,:,:,i));
         Qux   = Qux + fxuVx;
     end
-
+    
     Quu = cuu(:,:,i)   + fu(:,:,i)'*Vxx(:,:,i+1)*fu(:,:,i);
     if ~isempty(fuu)
         fuuVx = vectens(Vx(:,i+1),fuu(:,:,:,i));
         Quu   = Quu + fuuVx;
     end
-
+    
     Qxx = cxx(:,:,i)   + fx(:,:,i)'*Vxx(:,:,i+1)*fx(:,:,i);
     if ~isempty(fxx)
         Qxx = Qxx + vectens(Vx(:,i+1),fxx(:,:,:,i));
     end
-
+    
     Vxx_reg = (Vxx(:,:,i+1) + lambda*eye(n)*(regType == 2));
-
+    
     Qux_reg = cxu(:,:,i)'   + fu(:,:,i)'*Vxx_reg*fx(:,:,i);
     if ~isempty(fxu)
         Qux_reg = Qux_reg + fxuVx;
     end
-
+    
     QuuF = cuu(:,:,i)  + fu(:,:,i)'*Vxx_reg*fu(:,:,i) + lambda*eye(m)*(regType == 1);
-
+    
     if ~isempty(fuu)
         QuuF = QuuF + fuuVx;
     end
-
+    
     if nargin < 13 || isempty(lims) || lims(1,1) > lims(1,2)
         % no control limits: Cholesky decomposition, check for non-PD
         [R,d] = chol(QuuF);
@@ -475,37 +474,36 @@ for i = N-1:-1:1
             diverge  = i;
             return;
         end
-
+        
         % find control law
-        val = [Qu Qux_reg]
-        kK = -R\(R'\val);
+        kK = -R\(R'\[Qu Qux_reg]);
         k_i = kK(:,1);
         K_i = kK(:,2:n+1);
-
+        
     else        % solve Quadratic Program
         lower = lims(:,1)-u(:,i);
         upper = lims(:,2)-u(:,i);
-
+        
         [k_i,result,R,free] = boxQP(QuuF,Qu,lower,upper,k(:,min(i+1,N-1)));
         if result < 1
             diverge  = i;
             return;
         end
-
+        
         K_i    = zeros(m,n);
         if any(free)
             Lfree        = -R\(R'\Qux_reg(free,:));
             K_i(free,:)   = Lfree;
         end
-
+        
     end
-
+    
     % update cost-to-go approximation
     dV          = dV + [k_i'*Qu  .5*k_i'*Quu*k_i];
     Vx(:,i)     = Qx  + K_i'*Quu*k_i + K_i'*Qu  + Qux'*k_i;
     Vxx(:,:,i)  = Qxx + K_i'*Quu*K_i + K_i'*Qux + Qux'*K_i;
     Vxx(:,:,i)  = .5*(Vxx(:,:,i) + Vxx(:,:,i)');
-
+    
     % save controls/gains
     k(:,i)      = k_i;
     K(:,:,i)    = K_i;
@@ -529,21 +527,21 @@ cost  = sum(cost,1);
 
 % === first figure
 if figures ~= 0  && ( mod(trace(end,1)-1,figures) == 0 || init == 2 )
-
+    
     fig1 = findobj(0,'name','iLQG');
     if  isempty(fig1)
         fig1 = figure();
         set(fig1,'NumberTitle','off','Name','iLQG','KeyPressFcn',@Kpress,'user',0,'toolbar','none');
         fprintf('Type ESC in the graphics window to terminate early.\n')
     end
-
+    
     if size(trace,1) == 1
         set(fig1,'user',0);
     end
-
+    
     set(0,'currentfigure',fig1);
     clf(fig1);
-
+    
     ax1   = subplot(2,2,1);
     set(ax1,'XAxisL','top','YAxisL','right','xlim',[1 N],'xtick',[])
     line(1:N,cost,'linewidth',4,'color',.5*[1 1 1]);
@@ -552,7 +550,7 @@ if figures ~= 0  && ( mod(trace(end,1)-1,figures) == 0 || init == 2 )
     set(ax2,'xlim',[1 N],'Ygrid','on','YMinorGrid','off','color','none');
     set(ax1,'Position',get(ax2,'Position'));
     double_title(ax1,ax2,'state','running cost')
-
+    
     axL = subplot(2,2,3);
     CO = get(axL,'colororder');
     set(axL,'nextplot','replacechildren','colororder',CO(1:min(n,7),:))
@@ -569,10 +567,10 @@ if figures ~= 0  && ( mod(trace(end,1)-1,figures) == 0 || init == 2 )
     set(axL,'Position',get(axu,'Position'));
     double_title(axu,axL,'controls','gains')
     xlabel 'timesteps'
-
+    
     T        = trace(:,1);
     mT       = max(T);
-
+    
     ax1      = subplot(2,2,2);
     set(ax1,'XAxisL','top','YAxisL','right','xlim',[1 mT+eps],'xtick',[])
     hV = line(T,trace(:,7),'linewidth',4,'color',.5*[1 1 1]);
@@ -581,38 +579,38 @@ if figures ~= 0  && ( mod(trace(end,1)-1,figures) == 0 || init == 2 )
     set(ax2,'xlim',[1 mT+eps],'Ygrid','on','YMinorGrid','off','color','none');
     set(ax1,'Position',get(ax2,'Position'));
     double_title(ax1,ax2,'convergence trace','total cost')
-
+    
     subplot(2,2,4);
     plot(T,trace(:,6),'.-','linewidth',2);
     title 'actual/expected reduction ratio'
     set(gca,'xlim',[0 mT+1],'ylim',[0 2],'Ygrid','on');
     xlabel 'iterations'
-
+    
     set(findobj(fig1,'-property','FontSize'),'FontSize',8)
     stop = get(fig1,'user');
 end
 
 if figures < 0  &&  (mod(abs(trace(end,1))-1,figures) == 0 || init == 2) && ~isempty(Vx)
-
+    
     fig2 = findobj(0,'name','iLQG - derivatives');
     if  isempty(fig2)
         fig2 = figure();
         set(fig2,'NumberTitle','off','Name','iLQG - derivatives','KeyPressFcn',@Kpress,'user',0);
     end
-
+    
     if size(trace,1) == 1
         set(fig2,'user',0);
     end
-
+    
     set(0,'currentfigure',fig2);
     clf(fig2);
-
+    
     subplot(2,3,1);
     plot(1:N,Vx','linewidth',2);
     set(gca,'xlim',[1 N]);
     title 'V_x'
     grid on;
-
+    
     subplot(2,3,4);
     z = reshape(Vxx,nL^2,N)';
     zd = (1:nL+1:nL^2);
@@ -624,7 +622,7 @@ if figures < 0  &&  (mod(abs(trace(end,1))-1,figures) == 0 || init == 2) && ~ise
     set(gca,'xlim',[1 N]);
     title 'V_{xx}'
     xlabel 'timesteps'
-
+    
     subplot(2,3,2);
     Nfx     = size(fx,3);
     z = reshape(fx,nL^2,Nfx)';
@@ -636,7 +634,7 @@ if figures < 0  &&  (mod(abs(trace(end,1))-1,figures) == 0 || init == 2) && ~ise
     hold off
     grid on;
     title 'f_{x}'
-
+    
     if numel(fxx) > 0
         fxx = fxx(:,:,:,1:N-1);
         subplot(2,3,5);
@@ -646,7 +644,7 @@ if figures < 0  &&  (mod(abs(trace(end,1))-1,figures) == 0 || init == 2) && ~ise
         grid on;
         set(gca,'xlim',[1 N-1+eps]);
     end
-
+    
     subplot(2,3,3);
     Nfu     = size(fu,3);
     z = reshape(fu,nL*m,Nfu)';
@@ -654,7 +652,7 @@ if figures < 0  &&  (mod(abs(trace(end,1))-1,figures) == 0 || init == 2) && ~ise
     set(gca,'xlim',[1 Nfu]);
     title 'f_u'
     grid on;
-
+    
     if numel(fuu) > 0
         subplot(2,3,6);
         fuu = fuu(:,:,:,1:N-1);
@@ -664,7 +662,7 @@ if figures < 0  &&  (mod(abs(trace(end,1))-1,figures) == 0 || init == 2) && ~ise
         grid on;
         set(gca,'xlim',[1 N-1+eps]);
     end
-
+    
     set(findobj(fig2,'-property','FontSize'),'FontSize',8)
     stop = stop + get(fig2,'user');
 end
