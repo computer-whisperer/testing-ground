@@ -245,16 +245,16 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
             # print status
             if verbosity > 1:
-                print('iter: {} cost: {} reduction: {} gradient: {} log10lam: {}'.format(alg_iter, lamb, g_norm, log10(dlamb)))
+                print('iter: {} cost: {} reduction: {} gradient: {} log10lam: {}'.format(alg_iter, sum(cost), dcost, g_norm, log10(dlamb)))
 
             # decrease lambda
             dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
             lamb = lamb * dlamb * (lamb > options["lambdaFactor"])
 
             # accept changes
-            u = unew
-            x = xnew
-            cost = costnew
+            u = unew[:,:,None]
+            x = xnew[:,:,None]
+            cost = costnew[:,:,None]
             flgChange = 1
 
             # update trace
@@ -284,7 +284,6 @@ def ilqg(dyncst, x0, u0, options_in={}):
                 if verbosity > 0:
                     print("\nEXIT: lambda > lambdaMax")
                 break
-        break
     else:
         print("\nEXIT: Maximum iterations reached.\n")
 

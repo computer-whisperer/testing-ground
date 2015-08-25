@@ -36,7 +36,8 @@ u(isnan(u)) = 0;
 
 if nargout == 2
     f = A*x + B*u;
-    v1 = sum(x.*(Q*x),1);
+    v11 = x.*(Q*x);
+    v1 = sum(v11,1);
     v2 = sum(u.*(R*u),1);
     c = 0.5*v1 + 0.5*v2;
 else

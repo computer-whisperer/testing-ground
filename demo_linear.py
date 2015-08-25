@@ -17,8 +17,8 @@ def lin_dyn_cst(x, u, A, B, Q, R, want_all=False):
         v2 = dot(B, u)
         f = v1 + v2
         v11 = dot(Q, x)
-        v1 = sum(x * v11)
-        v2 = sum(u * dot(R,u))
+        v1 = sum(x * v11, axis=0)
+        v2 = sum(u * dot(R,u), axis=0)
         c = 0.5*v1 + 0.5*v2
         return f, c
     else:
