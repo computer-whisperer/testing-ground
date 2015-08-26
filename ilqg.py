@@ -1,5 +1,4 @@
 from numpy import *
-import timeit
 
 def app_tile(A, reps):
     A_ = A[:]
@@ -249,7 +248,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
             # decrease lambda
             dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
-            lamb = lamb * dlamb * (lamb > options["lambdaFactor"])
+            lamb = lamb * dlamb * (lamb > options["lambdaMin"])
 
             # accept changes
             u = unew[:,:,None]
