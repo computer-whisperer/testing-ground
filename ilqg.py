@@ -122,8 +122,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
         for alpha in options["Alpha"]:
             x, un, cost = forward_pass(x0[:,0], alpha*u, array([]), array([]), array([]), 1, dyncst, options["lims"])
             # simplistic divergence test
-            n1 = abs(x)
-            if all(n1 < 1e8):
+            if all(abs(x.flatten(1)) < 1e8):
                 u = un
                 diverge = False
                 break
@@ -190,10 +189,11 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
             #Check for termination due to small gradient
 
-            g_norm = mean((abs(u[:,:,0])+1) / abs(l).max(0))
+            g_norm = mean((abs(l) / (abs(u[:,:,0])+1)).max(0))
             trace[alg_iter][0] = alg_iter
             trace[alg_iter][4] = g_norm
             trace[alg_iter][7] = nan
+            print(g_norm)
             if g_norm < options["tolGrad"] and lamb < 1e-5:
                 dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
                 lamb = lamb * dlamb * (lamb > options["lambdaMin"])
@@ -244,7 +244,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
             # print status
             if verbosity > 1:
-                print('iter: {} cost: {} reduction: {} gradient: {} log10lam: {}'.format(alg_iter, sum(cost), dcost, g_norm, log10(dlamb)))
+                print('iter: {} cost: {} reduction: {} gradient: {} log10lam: {}'.format(alg_iter, sum(cost.flatten(1)), dcost, g_norm, log10(lamb)))
 
             # decrease lambda
             dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
@@ -268,8 +268,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
         else: # No cost improvement
 
             # increase lambda
-            dlamb = maximum(dlamb * options["lambdaFactor"], options["lambdaFactor"])
-            lamb = maximum(lamb * dlamb, options["lambdaMin"])
+            dlamb = max(dlamb * options["lambdaFactor"], options["lambdaFactor"])
+            lamb = max(lamb * dlamb, options["lambdaMin"])
 
             # print status
             if verbosity > 1:
@@ -325,7 +325,7 @@ def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
 
         xnew[:,:,i+1], cnew[:,:,i] = dyncst(xnew[:,:,i], unew[:,:,i], i*ones((1, K)))
 
-    _, cnew[:,:,i] = dyncst(xnew[:,:,N-1], full([m, K], nan), i)
+    _, cnew[:,:,N] = dyncst(xnew[:,:,N-1], full([m, K], nan), i)
 
     # put the time dimension in the columns
     xnew = xnew.transpose([0, 2, 1])

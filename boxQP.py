@@ -18,21 +18,21 @@ from numpy import *
 #     Hfree        - subspace cholesky factor   (n_free * n_free)
 #     free         - set of free dimensions     (n)
 
-def boxQP(h, g, lower, upper, x0, options):
+def boxQP(H, g, lower, upper, x0=None, options_in=None):
     
-    n        = size(H,1)
-    clamped  = false(n,1)
-    free     = true(n,1)
+    n        = H.shape[0]
+    clamped  = full((n, 1), False)
+    free     = full((n, 1), True)
     oldvalue = 0
     result   = 0
     gnorm    = 0
     nfactor  = 0
     trace    = []
     Hfree    = zeros(n)
-    clamp    = lambda x: max(lower, min(upper, x))
+    clamp    = lambda x: maximum(lower, min(upper, x))
     
     # initial state
-    if nargin > 4 and numel(x0)==n:
+    if x0 is not None and x0.size==n:
         x = clamp(x0.flatten(1))
     else:
         LU = [lower, upper]
@@ -41,32 +41,32 @@ def boxQP(h, g, lower, upper, x0, options):
     x[not isfinite(x)] = 0
     
     # options
-    if nargin > 5:
-        options        = num2cell(options.flatten(1))
-        maxIter, minGrad, minRelImprove, stepDec, minStep, Armijo, verbosity = deal(options{:})
-    else: # defaults
-        maxIter        = 100       # maximum number of iterations
-        minGrad        = 1e-8      # minimum norm of non-fixed gradient
-        minRelImprove  = 1e-8      # minimum relative improvement
-        stepDec        = 0.6       # factor for decreasing stepsize
-        minStep        = 1e-22     # minimal stepsize for linesearch
-        Armijo         = 0.1   	# Armijo parameter (fraction of linear improvement required)
-        verbose          = 0			# verbosity
+    options = {
+        "maxIter": 100,     # maximum number of iterations
+        "minGrad": 1e-8,     # minimum norm of non-fixed gradient
+        "minRelImprove": 1e-8,     # minimum relative improvement
+        "stepDec": 0.6,     # factor for decreasing stepsize
+        "minStep": 1e-22,     # minimal stepsize for linesearch
+        "Armijo": 0.1, 	# Armijo parameter (fraction of linear improvement required)
+        "verbose":  0, # verbosity
+    }
+    if options is not None > 5:
+        options.update(options_in)
     
     # initial objective value
     value    = x.conj().T*g + 0.5*x.conj().T*H*x
     
-    if verbose > 0:
+    if options["verbose"] > 0:
         print('==========\nStarting box-QP, dimension #-3d, initial value: #-12.3f\n',n, value)
     
     # main loop
-    for iter in range(maxIter):
+    for iter in range(options["maxIter"]):
         
         if result !=0:
             break
         
         # check relative improvement
-        if iter>0 and (oldvalue - value) < minRelImprove*abs(oldvalue):
+        if iter>0 and (oldvalue - value) < options["minRelImprove"]*abs(oldvalue):
             result = 4
             break
         oldvalue = value
@@ -76,42 +76,45 @@ def boxQP(h, g, lower, upper, x0, options):
         
         # find clamped dimensions
         old_clamped                     = clamped
-        clamped                         = false(n,1)
-        clamped((x == lower)&(grad>0))  = true
-        clamped((x == upper)&(grad<0))  = true
-        free                            = ~clamped
+        clamped                         = full((n,1), False)
+        clamped[(x == lower)&(grad>0)]  = True
+        clamped[(x == upper)&(grad<0)]  = True
+        free                            = not clamped
         
         # check for all clamped
+        
         if all(clamped):
             result = 6
             break
         
         # factorize if clamped has changed
         if iter == 1:
-            factorize    = true
+            factorize    = True
         else:
             factorize    = any(old_clamped != clamped)
         
         if factorize:
-            [Hfree, indef]  = chol(H(free,free))
-            if indef:
+            try:
+                Hfree = linalg.cholesky(H[free,free]).T
+            except linalg.LinAlgError as e:
+                print(e)
                 result = -1
                 break
-            nfactor            = nfactor + 1
+            nfactor += 1
         
         # check gradient norm
-        gnorm  = norm(grad(free))
-        if gnorm < minGrad:
+        gnorm  = linalg.norm(grad[free])
+        if gnorm < options["minGrad"]:
             result = 5
             break
         
         # get search direction
-        grad_clamped   = g  + H*(x.*clamped)
+        grad_clamped   = g  + H*(x*clamped)
         search         = zeros(n,1)
-        search(free)   = -Hfree\(Hfree'\grad_clamped(free)) - x(free)
+        search[free]   = linalg.solve(-Hfree, linalg.solve(Hfree.conj().T, grad_clamped(free))) - x(free)
         
         # check for descent direction
-        sdotg          = sum(search.*grad)
+        sdotg          = sum(search*grad)
         if sdotg >= 0: # (should not happen)
             break
         
@@ -119,33 +122,25 @@ def boxQP(h, g, lower, upper, x0, options):
         step  = 1
         nstep = 0
         xc    = clamp(x+step*search)
-        vc    = xc'*g + 0.5*xc'*H*xc
-        while (vc - oldvalue)/(step*sdotg) < Armijo:
-            step  = step*stepDec
+        vc    = xc.conj().T*g + 0.5*xc.conj().T*H*xc
+        while (vc - oldvalue)/(step*sdotg) < options["Armijo"]:
+            step  = step*options["stepDec"]
             nstep = nstep+1
             xc    = clamp(x+step*search)
-            vc    = xc'*g + 0.5*xc'*H*xc
-            if step<minStep:
+            vc    = xc.conj().T*g + 0.5*xc.conj().T*H*xc
+            if step<options["minStep"]:
                 result = 2
                 break
         
-        if verbose > 1:
+        if options["verbose"] > 1:
             print('iter #-3d  value # -9.5g |g| #-9.3g  reduction #-9.3g  linesearch #g^#-2d  n_clamped #d\n', 
-                iter, vc, gnorm, oldvalue-vc, stepDec, nstep, sum(clamped))
-        
-        if nargout > 4:
-            trace(iter).x        = x ##ok<*AGROW>
-            trace(iter).xc       = xc
-            trace(iter).value    = value
-            trace(iter).search   = search
-            trace(iter).clamped  = clamped
-            trace(iter).nfactor  = nfactor
+                iter, vc, gnorm, oldvalue-vc, options["stepDec"], nstep, sum(clamped))
         
         # accept candidate
         x     = xc
         value = vc
     
-    if iter >= maxIter:
+    if iter >= options["maxIter"]:
         result = 1
     
     results = { 'Hessian is not positive definite',          # result = -1
@@ -157,16 +152,18 @@ def boxQP(h, g, lower, upper, x0, options):
                 'Gradient norm smaller than tolerance',     # result = 5
                 'All dimensions are clamped'}                  # result = 6
     
-    if verbose > 0:
-        print('RESULT: #s.\niterations #d  gradient #-12.6 final value #-12.6g  factorizations #d\n',
-            results{result+2}, iter, gnorm, value, nfactor)
+    if options["verbose"] > 0:
+        print('RESULT: {}\niterations {}  gradient {} final value {}  factorizations {}\n'.format(
+            result, iter, gnorm, value, nfactor))
 
 def demoQP():
     options = [100, 1e-8, 1e-8, 0.6, 1e-22, 0.1, 2] # defaults with detailed printing
     n 		= 500
-    g 		= randn(n,1)
-    H 		= randn(n,n)
+    g 		= random.randn(n,1)
+    H 		= random.randn(n,n)
     H 		= H*H.conj().T
-    lower 	= -ones(n,1)
-    upper 	=  ones(n,1)
-    boxQP(H, g, lower, upper, randn(n,1), options)
+    lower 	= -ones((n,1))
+    upper 	=  ones((n,1))
+    boxQP(H, g, lower, upper, random.randn(n,1), options)
+
+demoQP()

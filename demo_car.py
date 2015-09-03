@@ -11,7 +11,7 @@ full_DDP = True
 DYNCST  = lambda x, u, i: car_dyn_cst(x,u,full_DDP)
 T       = 500              # horizon
 x0      = [11pi*3/20]   # initial state
-u0      = .1*randn(2,T)    # initial controls
+u0      = .1*random.randn(2,T)    # initial controls
 options = {}
 options["lims"]  = array([-.5, .5         # wheel angle limits (radians)
                            -2,  2])       # acceleration limits (m/s^2)
