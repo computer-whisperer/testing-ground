@@ -2,23 +2,7 @@ from numpy import *
 from ilqg import ilqg
 # A demo of iLQG/DDP with car-parking dynamics
 
-# Set full_DDP=true to compute 2nd order derivatives of the 
-# dynamics. This will make iterations more expensive, but 
-# final convergence will be much faster (quadratic)
-full_DDP = True
 
-# optimization problem
-DYNCST  = lambda x, u, i: car_dyn_cst(x,u,full_DDP)
-T       = 500              # horizon
-x0      = [11pi*3/20]   # initial state
-u0      = .1*random.randn(2,T)    # initial controls
-options = {}
-options["lims"]  = array([-.5, .5         # wheel angle limits (radians)
-                           -2,  2])       # acceleration limits (m/s^2)
-
-# run the optimization
-options["maxIter"] = 5
-x, u = ilqg(DYNCST, x0, u0, Op)
 
 
 ## ==== graphics ====
@@ -57,14 +41,14 @@ def car_dynamics(x, u):
     h  = 0.03     # h = timestep (seconds)
     
     # controls
-    w  = u[1,:,:] # w = front wheel angle
-    a  = u[2,:,:] # a = front wheel acceleration
+    w  = u[0,:,:] # w = front wheel angle
+    a  = u[1,:,:] # a = front wheel acceleration
     
-    o  = x[3,:,:] # o = car angle
+    o  = x[2,:,:] # o = car angle
                   # z = unit_vector(o)
     z  = [cos(o), sin(o)] 
     
-    v  = x[4,:,:] # v = front wheel velocity
+    v  = x[3,:,:] # v = front wheel velocity
     f  = h*v      # f = front wheel rolling distance
                    # b = back wheel rolling distance
     b  = d + f*cos(w) - sqrt(d^2 - (f*sin(w))**2)
@@ -129,28 +113,25 @@ def car_dyn_cst(x, u, full_DDP, want_all=False):
         c = car_cost(x,u)
         return f, c
     else:
-        # state and control indices
-        ix = 1:4
-        iu = 5:6
         
         # dynamics derivatives
-        xu_dyn  = lambda xu: car_dynamics(xu[ix,:], xu[iu,:])
+        xu_dyn  = lambda xu: car_dynamics(xu[1:4,:], xu[5:6,:])
         J       = finite_difference(xu_dyn, [x, u])
-        fx      = J[:,ix,:]
-        fu      = J[:,iu,:]
+        fx      = J[:,1:4,:]
+        fu      = J[:,5:6,:]
         
         # cost first derivatives
-        xu_cost = lambda xu: car_cost(xu[ix,:],xu[iu,:])
-        J       = squeeze(finite_difference(xu_cost, [x u]))
-        cx      = J[ix, :]
-        cu      = J[iu, :]
+        xu_cost = lambda xu: car_cost(xu[1:4,:],xu[5:6,:])
+        J       = squeeze(finite_difference(xu_cost, [x, u]))
+        cx      = J[1:4, :]
+        cu      = J[5:6, :]
         
         # cost second derivatives
         xu_Jcst = lambda xu: squeeze(finite_difference(xu_cost, xu))
         JJ      = finite_difference(xu_Jcst, [x, u])
-        cxx     = JJ[ix,ix,:]
-        cxu     = JJ[ix,iu,:]
-        cuu     = JJ[iu,iu,:]
+        cxx     = JJ[1:4,1:4,:]
+        cxu     = JJ[1:4,5:6,:]
+        cuu     = JJ[5:6,5:6,:]
         
         # dynamics second derivatives
         if full_DDP:
@@ -158,9 +139,9 @@ def car_dyn_cst(x, u, full_DDP, want_all=False):
             JJ      = finite_difference(xu_Jcst, [x, u])
             JJ      = reshape(JJ, [4, 6, size(J)])
             JJ      = 0.5*(JJ + permute(JJ,[1, 3, 2, 4]))
-            fxx     = JJ[:,ix,ix,:]
-            fxu     = JJ[:,ix,iu,:]
-            fuu     = JJ[:,iu,iu,:]
+            fxx     = JJ[:,1:4,1:4,:]
+            fxu     = JJ[:,1:4,5:6,:]
+            fuu     = JJ[:,5:6,5:6,:]
         else:
             fxx, fxu, fuu = deal([])
         
@@ -187,6 +168,23 @@ def finite_difference(fun, x, h=None):
     J       = pp(Y[:,:,2:], -Y[:,:,1]) / h
     J       = permute(J, [1, 3, 2])
 
+# Set full_DDP=true to compute 2nd order derivatives of the
+# dynamics. This will make iterations more expensive, but
+# final convergence will be much faster (quadratic)
+full_DDP = True
+
+# optimization problem
+DYNCST  = lambda x, u, i: car_dyn_cst(x,u,full_DDP)
+T       = 500              # horizon
+x0      = array([1, 1, pi*3/2, 0])   # initial state
+u0      = .1*random.randn(2,T)  # initial controls
+options = {}
+options["lims"]  = array([[-.5, .5],         # wheel angle limits (radians)
+                          [ -2,  2]])       # acceleration limits (m/s^2)
+
+# run the optimization
+options["maxIter"] = 5
+x, u = ilqg(DYNCST, x0, u0, options)
 
 ## ======== graphics functions ========
 #function h = car_plot(x,u)
@@ -274,7 +272,7 @@ def finite_difference(fun, x, h=None):
 
 # utility functions, singleton-expanded addition and multiplication
 def pp(a, b):
-    return bsxfun(@plus,a,b)
+    return a+b
 
 def tt(a, b):
-    return bsxfun(@times,a,b)
+    return a*b

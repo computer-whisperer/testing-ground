@@ -48,27 +48,27 @@ print('A demonstration of the iLQG/DDP algorithm\n'
 h = .01  # time step
 n = 3  # state dimension
 m = 2  # control dimension
-#A = random.randn(n, n)
-#A = A-A.conj().T  # skew-symmetric = pure imaginary eigenvalues
-#A = expm(h*A)  # discrete time
-#B = h*random.randn(n, m)
-A = array([[1, -1.5e-4, -4.6e-5],
-           [1.5e-4,  1,  1.1e-4],
-           [4.5e-5, -1.1e-4,  1]])
-B = array([[-1.7e-5, 1.1e-4],
-           [1.5e-4, 4.4e-6],
-           [-1.4e-5, 3.7e-6]])
+A = random.randn(n, n)
+A = A-A.conj().T  # skew-symmetric = pure imaginary eigenvalues
+A = expm(h*A)  # discrete time
+B = h*random.randn(n, m)
+#A = array([[1, -1.5e-4, -4.6e-5],
+#           [1.5e-4,  1,  1.1e-4],
+#           [4.5e-5, -1.1e-4,  1]])
+#B = array([[-1.7e-5, 1.1e-4],
+#           [1.5e-4, 4.4e-6],
+#           [-1.4e-5, 3.7e-6]])
 
 # quadratic costs
 Q = h*eye(n)
 R = .1*h*eye(m)
 
 # control limits
-# Op.lims = ones(m,1)*[-1 1]*.6;
+#Op.lims = ones(m,1)*[-1 1]*.6;
 
 # optimization problem
 dyncst = lambda x, u, i, want_all=False: lin_dyn_cst(x, u, A, B, Q, R, want_all)
-T = 30  # horizon
+T = 300  # horizon
 #x0 = random.randn(n, 1)  # initial state
 #u0 = .1*random.randn(m, T)  # initial controls
 x0 = array([[ 0.07919485],
@@ -78,5 +78,5 @@ u0 = array([[0.08702516, -0.10695812, -0.03761507, 0.00790764, 0.00532442, 0.082
             [-0.16786378, 0.08034461, -0.23664327, 0.16031643, 0.15972222, 0.00393588, -0.01797945, -0.14965136, 0.13926328, -0.00071236]])
 u0 = tile(u0, (1, T/10))
 # run the optimization
-x, u, L, Vx, Vxx, cost, trace = ilqg.ilqg(dyncst, x0, u0, {})
+x, u, L, Vx, Vxx, cost, trace = ilqg.ilqg(dyncst, x0, u0, {"lims": array([[.6, -.6],[.6, -.6]])})
 print(L[:,:,-1])

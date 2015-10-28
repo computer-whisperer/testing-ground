@@ -29,16 +29,15 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
     nfactor  = 0
     trace    = []
     Hfree    = zeros(n)
-    clamp    = lambda x: maximum(lower, min(upper, x))
-    
+
     # initial state
-    if x0 is not None and x0.size==n:
-        x = clamp(x0.flatten(1))
+    if x0 is not None and x0.size == n:
+        x = clip(x0, lower, upper)
     else:
         LU = [lower, upper]
         LU[not isfinite(LU)] = nan
         x = nanmean(LU,2)
-    x[not isfinite(x)] = 0
+    x[isinf(x)] = 0
     
     # options
     options = {
@@ -50,7 +49,7 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         "Armijo": 0.1, 	# Armijo parameter (fraction of linear improvement required)
         "verbose":  0, # verbosity
     }
-    if options is not None > 5:
+    if options_in is not None:
         options.update(options_in)
     
     # initial objective value
@@ -66,7 +65,7 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
             break
         
         # check relative improvement
-        if iter>0 and (oldvalue - value) < options["minRelImprove"]*abs(oldvalue):
+        if iter>0 and all((oldvalue - value)) < all(options["minRelImprove"]*abs(oldvalue)):
             result = 4
             break
         oldvalue = value
@@ -77,9 +76,9 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         # find clamped dimensions
         old_clamped                     = clamped
         clamped                         = full((n,1), False)
-        clamped[(x == lower)&(grad>0)]  = True
-        clamped[(x == upper)&(grad<0)]  = True
-        free                            = not clamped
+        clamped[((x == lower)&(grad>0))-1]  = True
+        clamped[((x == upper)&(grad<0))-1]  = True
+        free                            = logical_not(clamped)
         
         # check for all clamped
         
@@ -95,7 +94,8 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         
         if factorize:
             try:
-                Hfree = linalg.cholesky(H[free,free]).T
+                val1 = H[free[:, 0],:][:,free[:, 0]]
+                Hfree = linalg.cholesky(val1).T
             except linalg.LinAlgError as e:
                 print(e)
                 result = -1
@@ -110,8 +110,8 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         
         # get search direction
         grad_clamped   = g  + H*(x*clamped)
-        search         = zeros(n,1)
-        search[free]   = linalg.solve(-Hfree, linalg.solve(Hfree.conj().T, grad_clamped(free))) - x(free)
+        search         = zeros((n,1))
+        search[free]   = linalg.solve(-Hfree, linalg.solve(Hfree.conj().T, grad_clamped[free])) - x[free]
         
         # check for descent direction
         sdotg          = sum(search*grad)
@@ -121,12 +121,12 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         # armijo linesearch
         step  = 1
         nstep = 0
-        xc    = clamp(x+step*search)
+        xc    = clip(x+step*search, lower, upper)
         vc    = xc.conj().T*g + 0.5*xc.conj().T*H*xc
-        while (vc - oldvalue)/(step*sdotg) < options["Armijo"]:
+        while any((vc - oldvalue)/(step*sdotg)) < options["Armijo"]:
             step  = step*options["stepDec"]
             nstep = nstep+1
-            xc    = clamp(x+step*search)
+            xc    = clip(x+step*search, lower, upper)
             vc    = xc.conj().T*g + 0.5*xc.conj().T*H*xc
             if step<options["minStep"]:
                 result = 2
@@ -156,14 +156,16 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         print('RESULT: {}\niterations {}  gradient {} final value {}  factorizations {}\n'.format(
             result, iter, gnorm, value, nfactor))
 
+    return x, result, Hfree, free
+
 def demoQP():
-    options = [100, 1e-8, 1e-8, 0.6, 1e-22, 0.1, 2] # defaults with detailed printing
     n 		= 500
     g 		= random.randn(n,1)
     H 		= random.randn(n,n)
-    H 		= H*H.conj().T
+    H 		= dot(H,H.conj().T)
     lower 	= -ones((n,1))
     upper 	=  ones((n,1))
-    boxQP(H, g, lower, upper, random.randn(n,1), options)
+    out = boxQP(H, g, lower, upper, random.randn(n,1))
+    print(out)
 
-demoQP()
+#demoQP()

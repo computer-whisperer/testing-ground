@@ -219,7 +219,6 @@ for iter = 1:Op.maxIter
     % check for termination due to small gradient
     g_norm         = mean(max(abs(l) ./ (abs(u)+1),[],1));
     trace(iter,[1 4 7])  = [iter g_norm nan];
-    disp(g_norm)
     if g_norm < Op.tolGrad && lambda < 1e-5
         dlambda   = min(dlambda / Op.lambdaFactor, 1/Op.lambdaFactor);
         lambda    = lambda * dlambda * (lambda > Op.lambdaMin);

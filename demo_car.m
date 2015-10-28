@@ -15,7 +15,6 @@ Op.lims  = [-.5 .5;         % wheel angle limits (radians)
              -2  2];        % acceleration limits (m/s^2)
 
 % run the optimization
-Op.maxIter = 5;
 [x,u]= iLQG(DYNCST, x0, u0, Op);
 
 

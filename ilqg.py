@@ -1,4 +1,5 @@
 from numpy import *
+from boxQP import boxQP
 
 def app_tile(A, reps):
     A_ = A[:]
@@ -101,11 +102,11 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
     verbosity = options["print"]
 
-    len_lims = len(options["lims"])
+    len_lims = options["lims"].size
     if len_lims == 0:
         pass
     elif len_lims == 2*m:
-        options["lims"] = sort(options["lims"], 2)
+        options["lims"] = sort(options["lims"], 1)
     elif len_lims == 2:
         options["lims"] = dot(ones((m,1)), sort(options["lims"].flatten(1)))
     elif len_lims == m:
@@ -187,21 +188,20 @@ def ilqg(dyncst, x0, u0, options_in={}):
                 continue
             backPassDone = 1
 
-            #Check for termination due to small gradient
+        #Check for termination due to small gradient
 
-            g_norm = mean((abs(l) / (abs(u[:,:,0])+1)).max(0))
-            trace[alg_iter][0] = alg_iter
-            trace[alg_iter][4] = g_norm
-            trace[alg_iter][7] = nan
-            print(g_norm)
-            if g_norm < options["tolGrad"] and lamb < 1e-5:
-                dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
-                lamb = lamb * dlamb * (lamb > options["lambdaMin"])
-                trace[alg_iter][2] = lamb
-                trace[alg_iter][8] = dlamb
-                if verbosity > 0:
-                    print("\nSUCCESS: gradient norm < tolGrad\n")
-                break
+        g_norm = mean((abs(l) / (abs(u[:,:,0])+1)).max(0))
+        trace[alg_iter][0] = alg_iter
+        trace[alg_iter][3] = g_norm
+        trace[alg_iter][6] = nan
+        if g_norm < options["tolGrad"] and lamb < 1e-5:
+            dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
+            lamb = lamb * dlamb * (lamb > options["lambdaMin"])
+            trace[alg_iter][1] = lamb
+            trace[alg_iter][7] = dlamb
+            if verbosity > 0:
+                print("\nSUCCESS: gradient norm < tolGrad\n")
+            break
 
         # ==== STEP 3: line-search to find new control sequence, trajectory, cost
         fwdPassDone = 0
@@ -209,8 +209,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
             #t_fwd = tic
             if options["parallel"]: # parallel line-search
                 xnew, unew, costnew = forward_pass(x0, u, L, x[:,0:N], l, options["Alpha"], dyncst, options["lims"])
-                dcost = sum(cost.flatten(1)) - sum(costnew, 1)
-                w = amax(dcost, axis=1)[0]
+                dcost = cost.flatten(1).sum(axis=0) - costnew.sum(axis=1)
+                w = argmax(dcost)
                 dcost = dcost[0, w]
                 alpha = options["Alpha"][w]
                 expected = -alpha*(dV[0] + alpha*dV[1])
@@ -221,11 +221,11 @@ def ilqg(dyncst, x0, u0, options_in={}):
                     print("WARNING: non-positive expected reduction: should not occur")
                 if z > options["zMin"]:
                     fwdPassDone = 1
-                    costnew = costnew[:,:,w-1]
-                    xnew = xnew[:,:,w-1]
-                    unew = unew[:,:,w-1]
+                    costnew = costnew[:,:,w]
+                    xnew = xnew[:,:,w]
+                    unew = unew[:,:,w]
             else: # serial backtracking line-search
-                for alpha in options["alpha"]:
+                for alpha in options["Alpha"]:
                     xnew, unew, costnew = forward_pass(x0, u+l*alpha, L, x[:,0:N], [], 1, dyncst, options["lims"])
                     dcost = sum(cost.flatten(1)) - sum(costnew.flatten(1))
                     expected = -alpha*(dV(1) + alpha*dV(2))
@@ -244,7 +244,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
             # print status
             if verbosity > 1:
-                print('iter: {} cost: {} reduction: {} gradient: {} log10lam: {}'.format(alg_iter, sum(cost.flatten(1)), dcost, g_norm, log10(lamb)))
+                print('iter: {} cost: {} reduction: {} gradient: {} log10lam: {}'.format(alg_iter, sum(cost.flatten(1)), dcost, g_norm, nan if lamb == 0 else log10(lamb)))
 
             # decrease lambda
             dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
@@ -317,15 +317,15 @@ def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
             unew[:,:,i] = unew[:,:,i] + val
 
         if L.size != 0:
-            dx = xnew[:,:,1] - app_tile(x[:,i], (1, K))
+            dx = xnew[:,:,i] - app_tile(x[:,i], (1, K))
             unew[:,:,i] = unew[:,:,i] + dot(L[:,:,i], dx)
 
         if lims.size != 0:
-            unew[:,:,i] = min(app_tile(lims[:,1], (1, K)), maximum(app_tile(lims[:,0], (1, K)), unew[:,:,i]))
+            unew[:,:,i] = clip(unew[:,:,i], app_tile(lims[:,0], (1, K)), app_tile(lims[:,1], (1, K)))
 
         xnew[:,:,i+1], cnew[:,:,i] = dyncst(xnew[:,:,i], unew[:,:,i], i*ones((1, K)))
 
-    _, cnew[:,:,N] = dyncst(xnew[:,:,N-1], full([m, K], nan), i)
+    _, cnew[:,:,N] = dyncst(xnew[:,:,N], full([m, K], nan), i)
 
     # put the time dimension in the columns
     xnew = xnew.transpose([0, 2, 1])
@@ -394,7 +394,7 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
         if fuu is not None:
             QuuF = QuuF + fuuVx
 
-        if lims is not None or lims[0,0] > lims[0, 1]:
+        if lims is None or lims[0,0] > lims[0, 1]:
             # no control limits: Cholesky decomposition, check for non-PD
             try:
                 R = linalg.cholesky(QuuF).T
@@ -414,7 +414,7 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
             lower = lims[:,0]-u[:,i]
             upper = lims[:,1]-u[:,i]
 
-            k_i, result, R, free = boxQP(Quuf, Qu, lower, upper, k[:,min((i+1, N-1))])
+            k_i, result, R, free = boxQP(QuuF, Qu, lower, upper, k[:,min((i+1, N-2))])
             if result < 1:
                 diverge = i
                 return diverge, Vx, Vxx, k, K, dV
