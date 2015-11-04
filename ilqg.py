@@ -73,7 +73,7 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
     # user-adjustable parameters
     options = {
-        'lims':           array([]),  # control limits
+        'lims':           None,  # control limits
         'parallel':       True,  # use parallel line-search?
         'Alpha':          10**linspace(0, -3, 8),  # backtracking coefficients
         'tolFun':         1e-7,  # reduction exit criterion
@@ -88,13 +88,13 @@ def ilqg(dyncst, x0, u0, options_in={}):
         'zMin':           0,  # minimal accepted reduction ratio
         'plot':           1,  # 0: no;  k>0: every k iters; k<0: every k iters, with derivs window
         'print':          2,  # 0: no;  1: final; 2: iter; 3: iter, detailed
-        'cost':           array([]),  # initial cost for pre-rolled trajectory
+        'cost':           None,  # initial cost for pre-rolled trajectory
     }
 
     # --- initial sizes and controls
-    n = x0.shape[0]          # dimension of state vector
-    m = u0.shape[0]          # dimension of control vector
-    N = u0.shape[1]         # number of state transitions
+    n = x0.shape[-1]          # dimension of state vector
+    m = u0.shape[1]          # dimension of control vector
+    N = u0.shape[0]         # number of state transitions
     u = u0[:]
 
     # -- process options
@@ -102,103 +102,82 @@ def ilqg(dyncst, x0, u0, options_in={}):
 
     verbosity = options["print"]
 
-    len_lims = options["lims"].size
-    if len_lims == 0:
-        pass
-    elif len_lims == 2*m:
-        options["lims"] = sort(options["lims"], 1)
-    elif len_lims == 2:
-        options["lims"] = dot(ones((m,1)), sort(options["lims"].flatten(1)))
-    elif len_lims == m:
-        options["lims"] = dot(options["lims"].flatten(1), [-1, 1])
-    else:
-        raise ValueError("limits are of the wrong size")
+    if options["lims"] is not None:
+        len_lims = options["lims"].size
+        if len_lims == 0:
+            pass
+        elif len_lims == 2*m:
+            options["lims"] = sort(options["lims"], 1)
+        elif len_lims == 2:
+            options["lims"] = dot(ones((m,1)), sort(options["lims"].flatten(1)))
+        elif len_lims == m:
+            options["lims"] = dot(options["lims"].flatten(1), [-1, 1])
+        else:
+            raise ValueError("limits are of the wrong size")
 
     lamb = options["lambdaInit"]
     dlamb = options["dlambdaInit"]
 
     # Initial trajectory
-    if x0.shape[1] == 1:
+    if x0.shape[0] == n:
         diverge = True
         for alpha in options["Alpha"]:
-            x, un, cost = forward_pass(x0[:,0], alpha*u, array([]), array([]), array([]), 1, dyncst, options["lims"])
+            xn, un, costn = forward_pass(x0, alpha*u, None, None, None, array([1]), dyncst, options["lims"])
             # simplistic divergence test
-            if all(abs(x.flatten(1)) < 1e8):
-                u = un
+            if all(abs(xn) < 1e8):
+                u = un[:, 0]
+                x = xn[:, 0]
+                cost = costn[:, 0]
                 diverge = False
                 break
-    elif x0.shape[1] == N+1: # already did initial fpass
+    elif x0.shape[0] == N+1: # already did initial fpass
         x = x0.copy()
         diverge = False
-        if empty(options["cost"]):
+        if options["cost"] is None:
             raise ValueError("pre-rolled initial trajectory requires cost")
         else:
             cost = options["cost"]
 
     if diverge:
-        Vx, Vxx, stop = nan, nan, nan
-        L = zeros((m, n, N))
-        cost = array([])
-        timing = array([0, 0, 0, 0])
-        trace = array([1, lamb, nan, nan, nan, nan, sum(cost.flatten(1)), dlamb])
         if verbosity > 0:
             print("\nEXIT: Initial control sequence caused divergence\n")
-        return x, u, L, Vx, Vxx, cost, trace, timing
+        return x, u, None, None, None, None
 
     flgChange = 1
-    #t_total = tic
-    #diff_t = 0
-    #back_t = 0
-    #fwd_t = 0
-    stop = 0
     dcost = 0
     z = 0
     expected = 0
-    trace = zeros((min(options["maxIter"], 1e6), 8))
-    trace[0,:] = array([1, lamb, nan, nan, nan, nan, sum(cost.flatten(1)), dlamb])
-    L = zeros((m, n, N))
+    L = zeros((N, n, m))
     if verbosity > 0:
         print("\n============== begin iLQG ===============\n")
 
     for alg_iter in range(options["maxIter"]):
-        if stop:
-            break
 
         # ==== STEP 1: differentiate dynamics along new trajectory
         if flgChange:
-            #t_diff = tic
-            _, _, fx, fu, fxx, fxu, fuu, cx, cu, cxx, cxu, cuu = dyncst(x[:,:,0], append(u[:,:,0], full([m, 1], nan), axis=1), arange(1., N+2), True)
-            #diff_t = diff_t + toc(t_diff)
+            fx, fu, fxx, fxu, fuu, cx, cu, cxx, cxu, cuu = dyncst(x, vstack((u, full([1, m], nan))), arange(N), True)
             flgChange = 0
 
         # ==== STEP 2: backward pass, compute optimal control law and cost-to-go
         backPassDone = 0
         while not backPassDone:
-            # t_back = tic
             diverge, Vx, Vxx, l, L, dV = back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, options["regType"], options["lims"], u)
-            # back_t = back_t + toc(t_back
 
             if diverge:
                 if verbosity > 2:
                     print("Cholesky failed at timestep {}.".format(diverge))
-                dlamb = maximum(dlamb * options["lambdaFactor"], options["lambdaFactor"])
-                lamb = maximum(lamb * dlamb, options["lambdaMin"])
+                dlamb = max(dlamb * options["lambdaFactor"], options["lambdaFactor"])
+                lamb = max(lamb * dlamb, options["lambdaMin"])
                 if lamb > options["lambdaMax"]:
                     break
                 continue
             backPassDone = 1
 
         #Check for termination due to small gradient
-
-        g_norm = mean((abs(l) / (abs(u[:,:,0])+1)).max(0))
-        trace[alg_iter][0] = alg_iter
-        trace[alg_iter][3] = g_norm
-        trace[alg_iter][6] = nan
+        g_norm = mean((abs(l) / (abs(u[0])+1)).max(0))
         if g_norm < options["tolGrad"] and lamb < 1e-5:
             dlamb = min(dlamb / options["lambdaFactor"], 1/options["lambdaFactor"])
             lamb = lamb * dlamb * (lamb > options["lambdaMin"])
-            trace[alg_iter][1] = lamb
-            trace[alg_iter][7] = dlamb
             if verbosity > 0:
                 print("\nSUCCESS: gradient norm < tolGrad\n")
             break
@@ -206,9 +185,8 @@ def ilqg(dyncst, x0, u0, options_in={}):
         # ==== STEP 3: line-search to find new control sequence, trajectory, cost
         fwdPassDone = 0
         if backPassDone:
-            #t_fwd = tic
             if options["parallel"]: # parallel line-search
-                xnew, unew, costnew = forward_pass(x0, u, L, x[:,0:N], l, options["Alpha"], dyncst, options["lims"])
+                xnew, unew, costnew = forward_pass(x0, u, L, x[:N], l, options["Alpha"], dyncst, options["lims"])
                 dcost = cost.flatten(1).sum(axis=0) - costnew.sum(axis=1)
                 w = argmax(dcost)
                 dcost = dcost[0, w]
@@ -286,53 +264,39 @@ def ilqg(dyncst, x0, u0, options_in={}):
     else:
         print("\nEXIT: Maximum iterations reached.\n")
 
-    return x, u, L, Vx, Vxx, cost, trace
+    return x, u, L, Vx, Vxx, cost
 
 
 def forward_pass(x0, u, L, x, du, alpha, dyncst, lims):
-    """
-    parallel forward-pass (rollout)
-    internally time is on the 3rd dimension
-    to facilitate vectorized dynamics calls
-    """
 
     n = x0.shape[0]
-    s = shape(alpha)
-    if len(s) == 0:
-        K = 1
-    else:
-        K = max(s)
-    m = u.shape[0]
-    N = u.shape[1]
+    K = alpha.shape[0]
+    N = u.shape[0]
+    m = u.shape[1]
 
-    xnew = zeros((n, K, N+1))
-    xnew[:,:,0] = app_tile(x0, (1, K))
-    unew = zeros((m, K, N))
-    cnew = zeros((1, K, N+1))
+    xnew = zeros((N+1, K, n))
+    xnew[0, :, :] = x0
+    unew = zeros((N, K, m))
+    cnew = zeros((N+1, K))
     for i in range(N):
-        unew[:,:,i] = app_tile(u[:,i], (1, K))
+        unew[i] = u[i]
 
-        if du.size != 0:
-            val = du[:,i][:,None] * alpha[None, :]
-            unew[:,:,i] = unew[:,:,i] + val
+        if du is not None:
+            unew[i] = unew[i] + dot(du[i], alpha)
 
-        if L.size != 0:
-            dx = xnew[:,:,i] - app_tile(x[:,i], (1, K))
-            unew[:,:,i] = unew[:,:,i] + dot(L[:,:,i], dx)
+        if L is not None:
+            dx = xnew[i] - x[i]
+            unew[i] = unew[i] + dot(L[i], dx)
 
-        if lims.size != 0:
-            unew[:,:,i] = clip(unew[:,:,i], app_tile(lims[:,0], (1, K)), app_tile(lims[:,1], (1, K)))
+        if lims is not None:
+            unew[:,:,i] = clip(unew[i], lims[0], lims[1])
 
-        xnew[:,:,i+1], cnew[:,:,i] = dyncst(xnew[:,:,i], unew[:,:,i], i*ones((1, K)))
+        xnew[i+1], cnew[i] = dyncst(xnew[i], unew[i], i*ones(K))
 
-    _, cnew[:,:,N] = dyncst(xnew[:,:,N], full([m, K], nan), i)
-
-    # put the time dimension in the columns
-    xnew = xnew.transpose([0, 2, 1])
-    unew = unew.transpose([0, 2, 1])
-    cnew = cnew.transpose([0, 2, 1])
+    _, cnew[N] = dyncst(xnew[N], full([K, m], nan), i)
 
     return xnew, unew, cnew
+
 
 def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims, u):
     """
@@ -342,9 +306,9 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
     # tensor multiplication for DDP terms
     vectens = lambda a, b: transpose(sum(a*b, 1), [3, 2, 1])
 
-    N = cx.shape[1]
-    n = cx.shape[0]
-    m = cu.shape[0]
+    N = cx.shape[0]
+    n = cx.shape[1]
+    m = cu.shape[1]
 
     cx    = reshape(cx,  [n, N])
     cu    = reshape(cu,  [m, N])
@@ -411,8 +375,8 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
             K_i = kK[:,1:n+1]
 
         else:   # Solve Quadratic Program
-            lower = lims[:,0]-u[:,i]
-            upper = lims[:,1]-u[:,i]
+            lower = lims[:,0]-u[:,i,0]
+            upper = lims[:,1]-u[:,i,0]
 
             k_i, result, R, free = boxQP(QuuF, Qu, lower, upper, k[:,min((i+1, N-2))])
             if result < 1:

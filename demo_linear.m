@@ -22,7 +22,7 @@ R = .1*h*eye(m);
 
 % control limits
 Op.lims = ones(m,1)*[-1 1]*.6;
-% Op.lims = [];
+%Op.lims = [[.6,-.6],[.6,-.6]];
 
 % optimization problem
 DYNCST  = @(x,u,i) lin_dyn_cst(x,u,A,B,Q,R);

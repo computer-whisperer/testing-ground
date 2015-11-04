@@ -53,7 +53,7 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         options.update(options_in)
     
     # initial objective value
-    value    = x.conj().T*g + 0.5*x.conj().T*H*x
+    value    = dot(x.conj().T, g) + 0.5*dot(dot(x.conj().T, H),x)
     
     if options["verbose"] > 0:
         print('==========\nStarting box-QP, dimension #-3d, initial value: #-12.3f\n',n, value)
@@ -71,13 +71,13 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
         oldvalue = value
         
         # get gradient
-        grad     = g + H*x
+        grad     = g + dot(H, x)
         
         # find clamped dimensions
         old_clamped                     = clamped
-        clamped                         = full((n,1), False)
-        clamped[((x == lower)&(grad>0))-1]  = True
-        clamped[((x == upper)&(grad<0))-1]  = True
+        clamped                         = full((n,1), False, dtype=bool)
+        clamped[((x == lower)&(grad>0))]  = True
+        clamped[((x == upper)&(grad<0))]  = True
         free                            = logical_not(clamped)
         
         # check for all clamped
@@ -103,13 +103,13 @@ def boxQP(H, g, lower, upper, x0=None, options_in=None):
             nfactor += 1
         
         # check gradient norm
-        gnorm  = linalg.norm(grad[free])
+        gnorm  = linalg.norm(grad[free.flatten(1)])
         if gnorm < options["minGrad"]:
             result = 5
             break
         
         # get search direction
-        grad_clamped   = g  + H*(x*clamped)
+        grad_clamped   = g  + dot(H, (x*clamped))
         search         = zeros((n,1))
         search[free]   = linalg.solve(-Hfree, linalg.solve(Hfree.conj().T, grad_clamped[free])) - x[free]
         
