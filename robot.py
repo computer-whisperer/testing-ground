@@ -1,7 +1,8 @@
-import ilqg
 import wpilib
 from pyfrc.physics import drivetrains
 from numpy import *
+
+import ilqg
 
 
 def finite_difference(fun, x, h=2e-14):
@@ -45,8 +46,8 @@ def dyn_cst(x, u, want_all=False):
         # cost first derivatives
         xu_cost = lambda xu: cost(xu[:, 0:3], xu[:, 3:5])
         J = finite_difference(xu_cost, hstack((x, u)))
-        cx = J[:, 0:3]
-        cu = J[:, 3:5]
+        cx = J[:, 0:3, 0]
+        cu = J[:, 3:5, 0]
 
         # cost second derivatives
         xu_Jcst = lambda xu: finite_difference(xu_cost, xu)

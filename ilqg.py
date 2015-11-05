@@ -1,5 +1,7 @@
 from numpy import *
+
 from boxQP import boxQP
+
 
 def app_tile(A, reps):
     A_ = A[:]
@@ -304,37 +306,31 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
     """
 
     # tensor multiplication for DDP terms
-    vectens = lambda a, b: transpose(sum(a*b, 1), [3, 2, 1])
+    # vectens = @(a,b) permute(sum(bsxfun(@times,a,b),1), [3 2 1]);
+    vectens = lambda a, b: transpose(sum(a*b, axis=1), [2, 1, 0])
 
     N = cx.shape[0]
     n = cx.shape[1]
     m = cu.shape[1]
 
-    cx    = reshape(cx,  [n, N])
-    cu    = reshape(cu,  [m, N])
-    cxx   = reshape(cxx, [n, n, N])
-    cxu   = reshape(cxu, [n, m, N])
-    cuu   = reshape(cuu, [m, m, N])
+    k = zeros((N-1, m))
+    K = zeros((N-1, m, n))
+    Vx = zeros((N, n))
+    Vxx = zeros((N, n, n))
+    dV = array([0, 0])
 
-    k     = zeros((m,N-1))
-    K     = zeros((m,n,N-1))
-    Vx    = zeros((n,N))
-    Vxx   = zeros((n,n,N))
-    dV    = array([0, 0])
-
-    Vx[:,N-1]     = cx[:,N-1]
-    Vxx[:,:,N-1]  = cxx[:,:,N-1]
+    Vx[N-1] = cx[N-1]
+    Vxx[N-1]  = cxx[N-1]
 
     diverge = 0
 
     for i in reversed(range(N-1)):
-        Qu = cu[:,i] + dot(fu[:,:,i].conj().transpose(), Vx[:,i+1])
-        Qx = cx[:,i] + dot(fx[:,:,i].conj().transpose(), Vx[:,i+1])
+        Qu = cu[i] + dot(fu[i].conj().T, Vx[i+1, :, None])
+        Qx = cx[i] + dot(fx[i].conj().T, Vx[i+1, :, None])
 
-        val = dot(fu[:,:,i].conj().transpose(), Vxx[:,:,i+1])
-        Qux = cxu[:,:,i].conj().T + dot(val, fx[:,:,i])
+        Qux = cxu[i].conj().T + dot(dot(fu[i].conj().T, Vxx[i+1]), fx[i])
         if fxu is not None:
-            fxuVx = vectens(Vx[:,i+1], fxu[:,:,:,i])
+            fxuVx = vectens(Vx[i+1], fxu[i])
             Qux = Qux + fxuVx
 
         Quu = cuu[:,:,i] + dot(dot(fu[:,:,i].conj().transpose(), Vxx[:,:,i+1]), fu[:,:,i])
