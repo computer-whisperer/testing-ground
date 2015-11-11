@@ -305,9 +305,7 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
     Perform the Ricatti-Mayne backward pass
     """
 
-    # tensor multiplication for DDP terms
-    # vectens = @(a,b) permute(sum(bsxfun(@times,a,b),1), [3 2 1]);
-    vectens = lambda a, b: transpose(sum(a*b, axis=1), [2, 1, 0])
+    tensor = lambda a, b: sum(a*b, 0).T
 
     N = cx.shape[0]
     n = cx.shape[1]
@@ -319,37 +317,39 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
     Vxx = zeros((N, n, n))
     dV = array([0, 0])
 
+
+
     Vx[N-1] = cx[N-1]
     Vxx[N-1]  = cxx[N-1]
 
     diverge = 0
 
     for i in reversed(range(N-1)):
-        Qu = cu[i] + dot(fu[i].conj().T, Vx[i+1, :, None])
-        Qx = cx[i] + dot(fx[i].conj().T, Vx[i+1, :, None])
+        Qu = cu[i] + dot(fu[i], Vx[i+1])
+        Qx = cx[i] + dot(fx[i], Vx[i+1])
 
-        Qux = cxu[i].conj().T + dot(dot(fu[i].conj().T, Vxx[i+1]), fx[i])
-        if fxu is not None:
-            fxuVx = vectens(Vx[i+1], fxu[i])
-            Qux = Qux + fxuVx
-
-        Quu = cuu[:,:,i] + dot(dot(fu[:,:,i].conj().transpose(), Vxx[:,:,i+1]), fu[:,:,i])
+        Quu = cuu[i].T + dot(dot(fu[i], Vxx[i+1]), fu[i].T)
         if fuu is not None:
-            fuuVx = vectens(Vx[:,i+1], fuu[:,:,:,i])
+            fuuVx = sum(Vx[i+1, :, None, None]*fuu[i].T, 0)
             Quu = Quu + fuuVx
 
-        Qxx = cxx[:,:,i] + dot(dot(fx[:,:,i].conj().transpose(), Vxx[:,:,i+1]), fx[:,:,i])
+        Qux = cxu[i].T + dot(dot(fu[i], Vxx[i+1]), fx[i].T)
+        if fxu is not None:
+            fxuVx = sum(Vx[i+1, :, None, None]*fxu[i].T, 0)
+            Qux = Qux + fxuVx
+
+        Qxx = cxx[i].T + dot(dot(fx[i], Vxx[i+1]), fx[i].T)
         if fxx is not None:
-            fxxVx = vectens(Vx[:,i+1], fxx[:,:,:,i])
+            fxxVx = sum(Vx[i+1, :, None, None]*fxx[i].T, 0)
             Qxx = Qxx + fxxVx
 
-        Vxx_reg = (Vxx[:,:,i+1] + lamb*eye(n)*(regType==2))
+        Vxx_reg = (Vxx[i+1] + lamb*eye(n)*(regType==2))
 
-        Qux_reg = cxu[:,:,i].conj().transpose() + dot(dot(fu[:,:,i].conj().transpose(), Vxx_reg), fx[:,:,i])
+        Qux_reg = cxu[i].T + dot(dot(fu[i], Vxx_reg), fx[i].T)
         if fxu is not None:
             Qux_reg = Qux_reg + fxuVx
 
-        QuuF = cuu[:,:,i] + dot(dot(fu[:,:,i].conj().T, Vxx_reg), fu[:,:,i]) + lamb*eye(m)*(regType == 1)
+        QuuF = cuu[i] + dot(dot(fu[i], Vxx_reg), fu[i].T) + lamb*eye(m)*(regType == 1)
 
         if fuu is not None:
             QuuF = QuuF + fuuVx
@@ -364,9 +364,7 @@ def back_pass(cx, cu, cxx, cxu, cuu, fx, fu, fxx, fxu, fuu, lamb, regType, lims,
                 return diverge, Vx, Vxx, k, K, dV
 
             # find control law
-            val1 = empty([Qu.shape[0], 1])
-            val1[:, 0] = Qu
-            kK = linalg.solve(-R, linalg.solve(R.conj().transpose(), concatenate((val1, Qux_reg), 1)))
+            kK = linalg.solve(-R, linalg.solve(R.conj().transpose(), concatenate((Qu[None, :], Qux_reg), 1)))
             k_i = kK[:,0]
             K_i = kK[:,1:n+1]
 

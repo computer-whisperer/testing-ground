@@ -5,17 +5,19 @@ from numpy import *
 import ilqg
 
 
-def finite_difference(fun, x, h=2e-14):
+def finite_difference(fun, x, h=2e-10):
     # simple finite-difference derivatives
     # assumes the function fun() is vectorized
 
     K, n = x.shape
     H = vstack((zeros(n), h*eye(n)))
-    X = x[:, None, :] + H
-    X = X.reshape((K*(n+1), n))
-    Y = fun(X)
-    Y = Y.reshape((K, n+1, -1))
-    J = (Y[:, 1:] - Y[:, 0:1]) / h
+    X = x[:, None, :] + H[None, :, :]
+    Y = []
+    for i in range(K):
+        Y.append(fun(X[i]))
+    Y = array(Y)
+    D = (Y[:, 1:] - Y[:, 0:1])
+    J = D/h
     return J
 
 
@@ -37,21 +39,21 @@ def dyn_cst(x, u, want_all=False):
 
         xu_Jdyn = lambda xu: finite_difference(xu_dyn, xu)
         JJ = finite_difference(xu_Jdyn, hstack((x, u)))
-        JJ = JJ.reshape([J.shape[0], J.shape[1], J.shape[1], -1])
         JJ = 0.5*(JJ + JJ.transpose([0, 2, 1, 3]))
-        fxx = JJ[:, 0:3, 0:3, :]
-        fxu = JJ[:, 0:3, 3:5, :]
-        fuu = JJ[:, 3:5, 3:5, :]
+        fxx = JJ[:, 0:3, 0:3]
+        fxu = JJ[:, 0:3, 3:5]
+        fuu = JJ[:, 3:5, 3:5]
 
         # cost first derivatives
         xu_cost = lambda xu: cost(xu[:, 0:3], xu[:, 3:5])
         J = finite_difference(xu_cost, hstack((x, u)))
-        cx = J[:, 0:3, 0]
-        cu = J[:, 3:5, 0]
+        cx = J[:, 0:3]
+        cu = J[:, 3:5]
 
         # cost second derivatives
         xu_Jcst = lambda xu: finite_difference(xu_cost, xu)
         JJ = finite_difference(xu_Jcst, hstack((x, u)))
+        JJ = 0.5*(JJ + JJ.transpose([0, 2, 1]))
         cxx = JJ[:, 0:3, 0:3]
         cxu = JJ[:, 0:3, 3:5]
         cuu = JJ[:, 3:5, 3:5]
@@ -106,7 +108,7 @@ def cost(x, u):
     # final cost
     if any(final):
         llf = cf * sabs(x[final], pf)
-        lf = real(final)
+        lf = final.real
         lf[final] = llf
     else:
         lf = 0
@@ -128,9 +130,11 @@ class IlqgRobot(wpilib.IterativeRobot):
     def robotInit(self):
         # optimization problem
         DYNCST  = lambda x, u, i, want_all=False: dyn_cst(x, u, want_all)
-        T       = 50              # horizon
-        x0      = array([1, 0, 0])   # initial state
-        u0      = .1*random.randn(T, 2)  # initial controls
+        T       = 1              # horizon
+        x0      = array([0, 0, 10])   # initial state
+        #u0      = .1*random.randn(T, 2)  # initial controls
+        #u0 = array([[0.13443288, 0.04034761]])
+        u0      = zeros((T, 2))  # initial controls
         options = {}
 
         # run the optimization
