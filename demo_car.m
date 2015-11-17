@@ -8,9 +8,10 @@ full_DDP = true;
 
 % optimization problem
 DYNCST  = @(x,u,i) car_dyn_cst(x,u,full_DDP);
-T       = 500;              % horizon
+T       = 400;              % horizon
 x0      = [1;1;pi*3/2;0];   % initial state
 u0      = .1*randn(2,T);    % initial controls
+%u0 = zeros(2, T)
 Op.lims  = [-.5 .5;         % wheel angle limits (radians)
              -2  2];        % acceleration limits (m/s^2)
 

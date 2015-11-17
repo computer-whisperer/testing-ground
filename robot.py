@@ -1,151 +1,103 @@
 import wpilib
 from pyfrc.physics import drivetrains
 from numpy import *
+import time
+
 
 import ilqg
 
 
-def finite_difference(fun, x, h=2e-10):
-    # simple finite-difference derivatives
-    # assumes the function fun() is vectorized
-
-    K, n = x.shape
-    H = vstack((zeros(n), h*eye(n)))
-    X = x[:, None, :] + H[None, :, :]
-    Y = []
-    for i in range(K):
-        Y.append(fun(X[i]))
-    Y = array(Y)
-    D = (Y[:, 1:] - Y[:, 0:1])
-    J = D/h
-    return J
-
-
-def dyn_cst(x, u, want_all=False):
-    # combine car dynamics and cost
-    # use helper function finite_difference() to compute derivatives
-
-    if not want_all:
-        f = dynamics(x, u)
-        c = cost(x, u)
-        return f, c
-    else:
-
-        # dynamics derivatives
-        xu_dyn = lambda xu: dynamics(xu[:, 0:3], xu[:, 3:5])
-        J = finite_difference(xu_dyn, hstack((x, u)))
-        fx = J[:, 0:3]
-        fu = J[:, 3:5]
-
-        xu_Jdyn = lambda xu: finite_difference(xu_dyn, xu)
-        JJ = finite_difference(xu_Jdyn, hstack((x, u)))
-        JJ = 0.5*(JJ + JJ.transpose([0, 2, 1, 3]))
-        fxx = JJ[:, 0:3, 0:3]
-        fxu = JJ[:, 0:3, 3:5]
-        fuu = JJ[:, 3:5, 3:5]
-
-        # cost first derivatives
-        xu_cost = lambda xu: cost(xu[:, 0:3], xu[:, 3:5])
-        J = finite_difference(xu_cost, hstack((x, u)))
-        cx = J[:, 0:3]
-        cu = J[:, 3:5]
-
-        # cost second derivatives
-        xu_Jcst = lambda xu: finite_difference(xu_cost, xu)
-        JJ = finite_difference(xu_Jcst, hstack((x, u)))
-        JJ = 0.5*(JJ + JJ.transpose([0, 2, 1]))
-        cxx = JJ[:, 0:3, 0:3]
-        cxu = JJ[:, 0:3, 3:5]
-        cuu = JJ[:, 3:5, 3:5]
-
-        return fx, fu, fxx, fxu, fuu, cx, cu, cxx, cxu, cuu
-
-
-def dynamics(x, u):
+def dynamics_func(x, u, dt=.1):
 
     # === states and controls:
-    # x = [x y r]' = [x y r]
-    # u = [r l]'     = [right_wheel_out left_wheel_out]
-
-    # constants
-    h = 0.03     # h = timestep (seconds)
+    # x = [x y r x' y' r']' = [x y r]
+    # u = [r l]'     = [right_wheel_out left_wheel_out
 
     # controls
-    r_out = u[:, 0]  # w = right wheel out
-    l_out = u[:, 1]  # a = left wheel out
+    l_out = u[0]  # w = right wheel out
+    r_out = u[1]  # a = left wheel out
 
-    vel, rot = drivetrains.two_motor_drivetrain(l_out, r_out)
+    y_spd, rot_spd = drivetrains.two_motor_drivetrain(l_out, r_out)
 
-    r = x[:, 2] + h*rot  # r = car angle
-    z = vstack((cos(r), sin(r))) * h*vel
+    theta = x[2] + dt*rot_spd
+    world_vel = array([sin(theta), cos(theta)]) * y_spd
 
-    dy = vstack([z[0], z[1], rot]).T  # change in state
-    y = x + dy  # new state
-    return y
+    pos = concatenate((x[:2] + world_vel*dt, theta[None]))
+
+    return pos
 
 
-def cost(x, u):
+def cost_func(x, u):
     # cost function for car-parking problem
     # sum of 3 terms:
     # lu: quadratic cost on controls
     # lf: final cost on distance from target parking configuration
     # lx: small running cost on distance from origin to encourage tight turns
 
-    final = isnan(u[:, 0])
-    u[final, :] = 0
+    cu = 1e-2*array([1, 1])         # control cost coefficients
 
-    cu = 1e-2         # control cost coefficients
+    cf = array([ 1,  1,  1])    # final cost coefficients
+    pf = array([.01, .01,  1])   # smoothness scales for final cost
 
-    cf = array([.1,  .1,   1])  # final cost coefficients
-    pf = array([.01, .01, .01]).conj().T  # smoothness scales for final cost
+    cx = array([.1,   .1,  1])          # running cost coefficients
+    px = .1*ones(3)            # smoothness scales for running cost
 
-    cx = 1e-3*array([1, 1, 1])  # running cost coefficients
-    px = array([.1, .1, .1]).conj().T  # smoothness scales for running cost
-
-    # control cost
-    lu = sum(cu*u*u, axis=1)
-
-    # final cost
-    if any(final):
-        llf = cf * sabs(x[final], pf)
-        lf = final.real
-        lf[final] = llf
+    if any(isnan(u)):
+        u[:] = 0
+        lf = dot(cf, sabs(x[:3], pf).T)
     else:
         lf = 0
 
-    # running cost
-    lx = sum(cx * sabs(x[:, 0:3], px), axis=1)
+    # control cost
+    lu = dot(u*u, cu)
 
-    # total cost
+    # running cost
+    lx = dot(sabs(x[:3], px), cx)
+
+    # total const
     c = lu + lx + lf
     return c
 
 
-def sabs(x,p):
+def sabs(x, p):
     # smooth absolute-value function (a.k.a pseudo-Huber)
-    return sqrt(x**2 + p**2) - p
+    return sqrt(x*x + p*p) - p
+
 
 class IlqgRobot(wpilib.IterativeRobot):
 
     def robotInit(self):
         # optimization problem
-        DYNCST  = lambda x, u, i, want_all=False: dyn_cst(x, u, want_all)
-        T       = 1              # horizon
-        x0      = array([0, 0, 10])   # initial state
-        #u0      = .1*random.randn(T, 2)  # initial controls
-        #u0 = array([[0.13443288, 0.04034761]])
-        u0      = zeros((T, 2))  # initial controls
+        T = 100              # horizon
+        x0 = array([10,  -10,  0])   # initial state
+        u0 = .1*random.randn(T, 2)  # initial controls
+        #u0 = zeros((T, 2))  # initial controls
         options = {}
 
         # run the optimization
-        options["maxIter"] = 5
-        x, u = ilqg.ilqg(DYNCST, x0, u0, options)
+        options["lims"] = array([[-1, 1],
+                                 [-1, 1]])
+        start_time = time.time()
+        self.x, self.u, L, Vx, Vxx, cost = ilqg.ilqg(lambda x, u: dynamics_func(x, u), cost_func, x0, u0, options)
+        self.i = 0
+        print(self.x[-1])
+        print("ilqg took {} seconds".format(time.time() - start_time))
+
+        self.drive = wpilib.RobotDrive(0, 1)
+        self.joystick = wpilib.Joystick(0)
 
     def autonomousInit(self):
-        pass
+        self.autostart = time.time()
 
     def autonomousPeriodic(self):
-        pass
+        time_elapsed = time.time() - self.autostart
+        if time_elapsed < self.u.shape[0]*.1:
+            self.drive.tankDrive(self.u[time_elapsed//.1, 0], -self.u[time_elapsed//.1, 1])
+        else:
+            self.drive.tankDrive(0, 0)
+
+    def teleopPeriodic(self):
+        self.drive.arcadeDrive(self.joystick)
 
 
 if __name__ == "__main__":

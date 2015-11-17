@@ -2,32 +2,123 @@ from numpy import *
 from ilqg import ilqg
 # A demo of iLQG/DDP with car-parking dynamics
 
+def finite_difference(fun, x, h=2e-6):
+    # simple finite-difference derivatives
+    # assumes the function fun() is vectorized
+
+    K, n = x.shape
+    H = vstack((zeros(n), h*eye(n)))
+    X = x[:, None, :] + H[None, :, :]
+    Y = []
+    for i in range(K):
+        Y.append(fun(X[i]))
+    Y = array(Y)
+    D = (Y[:, 1:] - Y[:, 0:1])
+    J = D/h
+    return J
 
 
+def dyn_cst(x, u, want_all=False):
+    # combine car dynamics and cost
+    # use helper function finite_difference() to compute derivatives
 
-## ==== graphics ====
-#
-## prepare the axes
-#figure(4)
-#clf
-#set(gca,'xlim',[-4 4],'ylim',[-4 4],'DataAspectRatio',[1 1 1])
-#grid on
-#box on
-#
-## plot target configuration with light colors
-#h      = car_plot([0 0 0 0]', [0 0]')
-#fcolor = get(h,'facecolor')
-#ecolor = get(h,'edgecolor')
-#fcolor = cellfun(@(x) (x+3)/4,fcolor,'UniformOutput',false)
-#ecolor = cellfun(@(x) (x+3)/4,ecolor,'UniformOutput',false)
-#set(h, {'facecolor','edgecolor'}, [fcolor ecolor])
-#
-## animate the trajectory
-#h = []
-#for i=1:T
-#   delete(h)
-#   h = car_plot(x(:,i), u(:,i))
-#   drawnow    
+    if not want_all:
+        f = car_dynamics(x, u)
+        c = car_cost(x, u)
+        return f, c
+    else:
+
+        # dynamics derivatives
+        xu_dyn = lambda xu: car_dynamics(xu[:, 0:4], xu[:, 4:6])
+        J = finite_difference(xu_dyn, hstack((x, u)))
+        fx = J[:, 0:4]
+        fu = J[:, 4:6]
+
+        xu_Jdyn = lambda xu: finite_difference(xu_dyn, xu)
+        JJ = finite_difference(xu_Jdyn, hstack((x, u)))
+        JJ = 0.5*(JJ + JJ.transpose([0, 2, 1, 3]))
+        fxx = JJ[:, 0:4, 0:4]
+        fxu = JJ[:, 0:4, 4:6]
+        fuu = JJ[:, 4:6, 4:6]
+
+        # cost first derivatives
+        xu_cost = lambda xu: car_cost(xu[:, 0:4], xu[:, 4:6])
+        J = finite_difference(xu_cost, hstack((x, u)))
+        cx = J[:, 0:4]
+        cu = J[:, 4:6]
+
+        # cost second derivatives
+        xu_Jcst = lambda xu: finite_difference(xu_cost, xu)
+        JJ = finite_difference(xu_Jcst, hstack((x, u)))
+        JJ = 0.5*(JJ + JJ.transpose([0, 2, 1]))
+        cxx = JJ[:, 0:4, 0:4]
+        cxu = JJ[:, 0:4, 4:6]
+        cuu = JJ[:, 4:6, 4:6]
+
+        return fx, fu, None, None, None, cx, cu, cxx, cxu, cuu
+
+
+def dynamics(x, u):
+
+    # === states and controls:
+    # x = [x y r]' = [x y r]
+    # u = [r l]'     = [right_wheel_out left_wheel_out]
+
+    # constants
+    h = 0.05     # h = timestep (seconds)
+
+    # controls
+    r_out = u[:, 0]  # w = right wheel out
+    l_out = u[:, 1]  # a = left wheel out
+
+    vel, rot = drivetrains.two_motor_drivetrain(l_out, r_out)
+
+    r = x[:, 2] + h*rot  # r = car angle
+    z = vstack((cos(r), sin(r))) * h*vel
+
+    dy = vstack([z[0], z[1], rot]).T  # change in state
+    y = x + dy  # new state
+    return y
+
+
+def cost(x, u):
+    # cost function for car-parking problem
+    # sum of 3 terms:
+    # lu: quadratic cost on controls
+    # lf: final cost on distance from target parking configuration
+    # lx: small running cost on distance from origin to encourage tight turns
+    final = isnan(u[:, 0])
+    u[final, :] = 0
+
+    cu = 1e-1         # control cost coefficients
+
+    cf = array([.1,  .1,   1])  # final cost coefficients
+    pf = array([.01, .01, .01]).conj().T  # smoothness scales for final cost
+
+    cx = 1e-3*array([1, 1, 1])  # running cost coefficients
+    px = array([.1, .1, .1]).conj().T  # smoothness scales for running cost
+
+    # control cost
+    lu = sum(cu*u*u, axis=1)
+
+    # final cost
+    if any(final):
+        lf = final * dot(cf, sabs(x[final], pf).T)
+    else:
+        lf = 0
+
+    # running cost
+    lx = sum(cx * sabs(x[:, 0:3], px), axis=1)
+    # lx = sum(x*x, axis=1)
+
+    # total cost
+    c = lu + lx + lf
+    return c
+
+
+def sabs(x, p):
+    # smooth absolute-value function (a.k.a pseudo-Huber)
+    return sqrt(x*x + p*p) - p
 
 
 def car_dynamics(x, u):
@@ -41,21 +132,21 @@ def car_dynamics(x, u):
     h  = 0.03     # h = timestep (seconds)
     
     # controls
-    w  = u[0,:,:] # w = front wheel angle
-    a  = u[1,:,:] # a = front wheel acceleration
+    w  = u[:, 0] # w = front wheel angle
+    a  = u[:, 1] # a = front wheel acceleration
     
-    o  = x[2,:,:] # o = car angle
+    o  = x[:, 2] # o = car angle
                   # z = unit_vector(o)
-    z  = [cos(o), sin(o)] 
+    z = vstack((cos(o), sin(o)))
     
-    v  = x[3,:,:] # v = front wheel velocity
+    v  = x[:, 3] # v = front wheel velocity
     f  = h*v      # f = front wheel rolling distance
                    # b = back wheel rolling distance
-    b  = d + f*cos(w) - sqrt(d^2 - (f*sin(w))**2)
+    b  = d + f*cos(w) - sqrt(d**2 - (f*sin(w))**2)
                    # do = change in car angle
-    dod = asin(sin(w)*f/d)
-    
-    dy = [tt(b, z), dod, h*a]   # change in state
+    dod = arcsin(sin(w)*f/d)
+    m = b*z
+    dy = vstack([m[0], m[1], dod, h*a]).T   # change in state
     y  = x + dy                # new state
     return y
 
@@ -67,106 +158,34 @@ def car_cost(x, u):
     # lf: final cost on distance from target parking configuration
     # lx: small running cost on distance from origin to encourage tight turns
     
-    final = isnan(u[1,:])
-    u[:,final]  = 0
+    final = isnan(u[:, 0])
+    u[final, :]  = 0
     
-    cu  = 1e-2*[1, .01]         # control cost coefficients
+    cu  = 1e-2*array([1, .01])         # control cost coefficients
     
-    cf  = [ .1,  .1,   1,  .3]    # final cost coefficients
-    pf  = [.01, .01, .01,  1].conj().T    # smoothness scales for final cost
+    cf  = array([ .1,  .1,   1,  .3])    # final cost coefficients
+    pf  = array([.01, .01, .01,  1]).T    # smoothness scales for final cost
     
-    cx  = 1e-3*[1,  1]          # running cost coefficients
-    px  = [.1, .1].conj().T             # smoothness scales for running cost
+    cx  = 1e-3*array([1,  1])          # running cost coefficients
+    px  = array([.1, .1]).T             # smoothness scales for running cost
     
     # control cost
-    lu    = cu*u**2
+    lu    = dot(u**2, cu)
     
     # final cost
     if any(final):
-       llf      = cf*sabs(x[:,final],pf)
-       lf       = real(final)
-       lf[final]= llf
+       lf      = final * dot(cf, sabs(x[final], pf).T)
     else:
        lf    = 0
     
     
     # running cost
-    lx = cx*sabs(x[1:2,:],px)
+    lx = dot(sabs(x[:, 0:2],px), cx)
     
     # total const
     c     = lu + lx + lf
     return c
 
-def sabs(x,p):
-    # smooth absolute-value function (a.k.a pseudo-Huber)
-    y = pp( sqrt(pp(x**2,p**2)), -p)
-    return y
-
-
-def car_dyn_cst(x, u, full_DDP, want_all=False):
-    #function [f,c,fx,fu,fxx,fxu,fuu,cx,cu,cxx,cxu,cuu] = car_dyn_cst(x,u,full_DDP)
-    # combine car dynamics and cost
-    # use helper function finite_difference() to compute derivatives
-    
-    if not want_all:
-        f = car_dynamics(x,u)
-        c = car_cost(x,u)
-        return f, c
-    else:
-        
-        # dynamics derivatives
-        xu_dyn  = lambda xu: car_dynamics(xu[1:4,:], xu[5:6,:])
-        J       = finite_difference(xu_dyn, [x, u])
-        fx      = J[:,1:4,:]
-        fu      = J[:,5:6,:]
-        
-        # cost first derivatives
-        xu_cost = lambda xu: car_cost(xu[1:4,:],xu[5:6,:])
-        J       = squeeze(finite_difference(xu_cost, [x, u]))
-        cx      = J[1:4, :]
-        cu      = J[5:6, :]
-        
-        # cost second derivatives
-        xu_Jcst = lambda xu: squeeze(finite_difference(xu_cost, xu))
-        JJ      = finite_difference(xu_Jcst, [x, u])
-        cxx     = JJ[1:4,1:4,:]
-        cxu     = JJ[1:4,5:6,:]
-        cuu     = JJ[5:6,5:6,:]
-        
-        # dynamics second derivatives
-        if full_DDP:
-            xu_Jcst = lambda xu: finite_difference(xu_dyn, xu)
-            JJ      = finite_difference(xu_Jcst, [x, u])
-            JJ      = reshape(JJ, [4, 6, size(J)])
-            JJ      = 0.5*(JJ + permute(JJ,[1, 3, 2, 4]))
-            fxx     = JJ[:,1:4,1:4,:]
-            fxu     = JJ[:,1:4,5:6,:]
-            fuu     = JJ[:,5:6,5:6,:]
-        else:
-            fxx, fxu, fuu = deal([])
-        
-        return fx, fu, fxx, fxu, fuu, cx, cu, cxx, cxu, cuu
-
-
-
-def finite_difference(fun, x, h=None):
-    # simple finite-difference derivatives
-    # assumes the function fun() is vectorized
-    
-    if h is None:
-        h = 2^-17
-    
-    
-    [n, K]  = size(x)
-    H       = [zeros(n,1), h*eye(n)]
-    H       = permute(H, [1, 3, 2])
-    X       = pp(x, H)
-    X       = reshape(X, n, K*(n+1))
-    Y       = fun(X)
-    m       = numel(Y)/(K*(n+1))
-    Y       = reshape(Y, m, K, n+1)
-    J       = pp(Y[:,:,2:], -Y[:,:,1]) / h
-    J       = permute(J, [1, 3, 2])
 
 # Set full_DDP=true to compute 2nd order derivatives of the
 # dynamics. This will make iterations more expensive, but
@@ -174,18 +193,19 @@ def finite_difference(fun, x, h=None):
 full_DDP = True
 
 # optimization problem
-DYNCST  = lambda x, u, i: car_dyn_cst(x,u,full_DDP)
+DYNCST  = lambda x, u, i, want_all=False: dyn_cst(x, u, want_all)
 T       = 500              # horizon
 x0      = array([1, 1, pi*3/2, 0])   # initial state
-u0      = .1*random.randn(2,T)  # initial controls
+u0      = .1*random.randn(T, 2)  # initial controls
+#u0 = zeros((T, 2))
 options = {}
 options["lims"]  = array([[-.5, .5],         # wheel angle limits (radians)
                           [ -2,  2]])       # acceleration limits (m/s^2)
 
 # run the optimization
-options["maxIter"] = 5
-x, u = ilqg(DYNCST, x0, u0, options)
-
+#options["maxIter"] = 5
+x, u, L, Vx, Vxx, cost = ilqg(DYNCST, x0, u0, options)
+print("done")
 ## ======== graphics functions ========
 #function h = car_plot(x,u)
 #
