@@ -2,9 +2,14 @@ import wpilib
 from pyfrc.physics import drivetrains
 from numpy import *
 import time
-
-
+from matplotlib import use
+use("GTK3Agg")
+from matplotlib import cm
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.ticker import LinearLocator, FormatStrFormatter
+import matplotlib.pyplot as plt
 import ilqg
+import time
 
 
 def dynamics_func(x, u, dt=.1):
@@ -28,35 +33,25 @@ def dynamics_func(x, u, dt=.1):
 
 
 def cost_func(x, u):
-    # cost function for car-parking problem
-    # sum of 3 terms:
-    # lu: quadratic cost on controls
-    # lf: final cost on distance from target parking configuration
-    # lx: small running cost on distance from origin to encourage tight turns
 
-    cu = 1e-2*array([1, 1])         # control cost coefficients
+    # running cost
+    cost = 0
+    #cost += max(3 - .1*linalg.norm(x[:2]-array([0, 5]))**2, 0)
+    cost += 20**((-linalg.norm(x[:2]-array([-2, 5]))**2)/4**2)
+    cost += 15**((-linalg.norm(x[:2]-array([2.5, 10]))**2)/4**2)
+    cost += 15**((-linalg.norm(x[:2]-array([-2, 15]))**2)/4**2)
+    cost += 15**((-linalg.norm(x[:2]-array([4, 18]))**2)/4**2)
 
-    cf = array([ 1,  1,  1])    # final cost coefficients
-    pf = array([.01, .01,  1])   # smoothness scales for final cost
-
-    cx = array([.1,   .1,  1])          # running cost coefficients
-    px = .1*ones(3)            # smoothness scales for running cost
+    cost -= 20**((-linalg.norm(x[:2]-array([20, 20]))**2)/8**2)
 
     if any(isnan(u)):
         u[:] = 0
-        lf = dot(cf, sabs(x[:3], pf).T)
-    else:
-        lf = 0
+        cost += 3*sabs(linalg.norm(x[:2]-array([20, 20])), .1)
 
-    # control cost
-    lu = dot(u*u, cu)
+    #  control cost coefficients
+    cost += dot(u*u, 4e-1*array([1, 1]))
 
-    # running cost
-    lx = dot(sabs(x[:3], px), cx)
-
-    # total const
-    c = lu + lx + lf
-    return c
+    return cost
 
 
 def sabs(x, p):
@@ -64,12 +59,48 @@ def sabs(x, p):
     return sqrt(x*x + p*p) - p
 
 
+def cost_graph(path):
+    global ax
+    #plt.ion()
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+
+    X = arange(-10, 10, 0.25)
+    Y = arange(-5, 25, 0.25)
+
+    X, Y = meshgrid(X, Y)
+    Z = zeros(X.shape)
+    for x in range(X.shape[0]):
+        for y in range(X.shape[1]):
+            Z[x, y] = .2*(cost_func(array([X[x, y], Y[x, y], 0]), array([0, 0])))
+
+    surf = ax.plot_surface(X, Y, Z, rstride=1, cstride=1, cmap=cm.coolwarm,
+                           linewidth=0, antialiased=False)
+    #ax.set_zlim(-1.01, 1.01)
+
+    ax.zaxis.set_major_locator(LinearLocator(10))
+    ax.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
+
+    fig.colorbar(surf, shrink=0.5, aspect=5)
+
+    path_z = ones(path.shape[0])
+    for i in range(path.shape[0]):
+        path_z[i] = .2*(.05+cost_func(array([path[i, 0], path[i, 1], 0]), array([0, 0])))
+
+    path_line = ax.plot(path[:, 0], path[:, 1], path_z)
+
+    plt.show()
+
+
+path_line = None
+
+
 class IlqgRobot(wpilib.IterativeRobot):
 
     def robotInit(self):
         # optimization problem
         T = 100              # horizon
-        x0 = array([10,  -10,  0])   # initial state
+        x0 = array([0,  0,  0])   # initial state
         u0 = .1*random.randn(T, 2)  # initial controls
         #u0 = zeros((T, 2))  # initial controls
         options = {}
@@ -77,12 +108,13 @@ class IlqgRobot(wpilib.IterativeRobot):
         # run the optimization
         options["lims"] = array([[-1, 1],
                                  [-1, 1]])
+
         start_time = time.time()
         self.x, self.u, L, Vx, Vxx, cost = ilqg.ilqg(lambda x, u: dynamics_func(x, u), cost_func, x0, u0, options)
         self.i = 0
         print(self.x[-1])
         print("ilqg took {} seconds".format(time.time() - start_time))
-
+        cost_graph(self.x)
         self.drive = wpilib.RobotDrive(0, 1)
         self.joystick = wpilib.Joystick(0)
 
