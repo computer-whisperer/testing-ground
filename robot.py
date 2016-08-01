@@ -3,7 +3,7 @@ from pyfrc.physics import drivetrains
 from numpy import *
 import time
 from matplotlib import use
-use("GTK3Agg")
+use("TkAgg")
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.ticker import LinearLocator, FormatStrFormatter
